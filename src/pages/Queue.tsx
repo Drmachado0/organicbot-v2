@@ -793,26 +793,60 @@ export default function QueuePage() {
                 const file = e.dataTransfer.files[0];
                 if (!file) return;
                 const reader = new FileReader();
-                reader.onload = (ev) => setImportText((prev) => [prev, ev.target?.result as string].filter(Boolean).join("\n"));
+                reader.onload = (ev) => {
+                  const text = ev.target?.result as string;
+                  if (file.name.endsWith(".json")) {
+                    try {
+                      const parsed = JSON.parse(text);
+                      const usernames: string[] = Array.isArray(parsed)
+                        ? parsed.map((item: unknown) =>
+                            typeof item === "string" ? item : (item as Record<string, string>)?.username ?? ""
+                          ).filter(Boolean)
+                        : Object.keys(parsed);
+                      setImportText((prev) => [prev, usernames.join("\n")].filter(Boolean).join("\n"));
+                    } catch {
+                      setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
+                    }
+                  } else {
+                    setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
+                  }
+                };
                 reader.readAsText(file);
               }}
             >
               <input
                 type="file"
-                accept=".txt,.csv,.text"
+                accept=".txt,.csv,.text,.json"
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
                   const reader = new FileReader();
-                  reader.onload = (ev) => setImportText((prev) => [prev, ev.target?.result as string].filter(Boolean).join("\n"));
+                  reader.onload = (ev) => {
+                    const text = ev.target?.result as string;
+                    if (file.name.endsWith(".json")) {
+                      try {
+                        const parsed = JSON.parse(text);
+                        const usernames: string[] = Array.isArray(parsed)
+                          ? parsed.map((item: unknown) =>
+                              typeof item === "string" ? item : (item as Record<string, string>)?.username ?? ""
+                            ).filter(Boolean)
+                          : Object.keys(parsed);
+                        setImportText((prev) => [prev, usernames.join("\n")].filter(Boolean).join("\n"));
+                      } catch {
+                        setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
+                      }
+                    } else {
+                      setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
+                    }
+                  };
                   reader.readAsText(file);
                   e.target.value = "";
                 }}
               />
               <Upload className="w-5 h-5 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">
-                Arraste um arquivo <span className="text-primary font-medium">.txt / .csv</span> ou clique para selecionar
+                Arraste um arquivo <span className="text-primary font-medium">.txt / .csv / .json</span> ou clique para selecionar
               </span>
             </label>
 
