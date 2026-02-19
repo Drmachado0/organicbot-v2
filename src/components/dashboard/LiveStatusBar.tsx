@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Clock, Wifi, WifiOff, Zap } from "lucide-react";
+import { Clock, Wifi, WifiOff, Zap, Chrome } from "lucide-react";
 import type { DashboardAccount } from "@/hooks/useDashboardV2";
 
 interface Props {
@@ -27,6 +27,20 @@ function getModeLabel(mode: string | null): string {
   return map[mode] ?? mode;
 }
 
+function getExtensionStatus(lastHeartbeat: string | null): "online" | "away" | "offline" {
+  if (!lastHeartbeat) return "offline";
+  const diff = Date.now() - new Date(lastHeartbeat).getTime();
+  if (diff < 6 * 60 * 1000) return "online";
+  if (diff < 30 * 60 * 1000) return "away";
+  return "offline";
+}
+
+const extStatusConfig = {
+  online:  { label: "Extensão ativa",   color: "hsl(152 72% 48%)", bg: "hsl(152 72% 48% / 0.12)" },
+  away:    { label: "Extensão ausente", color: "hsl(42 96% 56%)",  bg: "hsl(42 96% 56% / 0.12)"  },
+  offline: { label: "Extensão offline", color: "hsl(215 20% 45%)", bg: "hsl(215 20% 45% / 0.08)" },
+};
+
 export function LiveStatusBar({ account }: Props) {
   const [countdown, setCountdown] = useState(47);
   const [sessionMs, setSessionMs] = useState(0);
@@ -41,6 +55,8 @@ export function LiveStatusBar({ account }: Props) {
 
   const isOnline = account?.bot_online ?? false;
   const mode = getModeLabel(account?.bot_mode ?? null);
+  const extStatus = getExtensionStatus(account?.last_heartbeat ?? null);
+  const extCfg = extStatusConfig[extStatus];
 
   return (
     <div
@@ -98,8 +114,18 @@ export function LiveStatusBar({ account }: Props) {
         </>
       )}
 
+      {/* Extension heartbeat badge */}
+      <div
+        className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0"
+        style={{ color: extCfg.color, backgroundColor: extCfg.bg }}
+        title={account?.last_heartbeat ? `Último heartbeat: ${new Date(account.last_heartbeat).toLocaleTimeString("pt-BR")}` : "Sem heartbeat registrado"}
+      >
+        <Chrome className="h-3 w-3" />
+        {extCfg.label}
+      </div>
+
       {account && (
-        <div className="ml-auto text-xs text-muted-foreground hidden md:block">
+        <div className="text-xs text-muted-foreground hidden md:block">
           @{account.ig_username}
         </div>
       )}
