@@ -156,12 +156,20 @@ function InjectModal({ campaign, userId, onClose, onInjected }: InjectModalProps
       if (error) throw error;
       const added = typeof data === "number" ? data : 0;
       const skipped = totalTargets - added;
+
+      // Auto-sync: force extension to pick up new targets immediately
+      await supabase.rpc("send_bot_command", {
+        p_ig_account_id: selectedId,
+        p_command: "sync_queue",
+        p_params: {},
+      });
+
       if (added === 0) {
         toast.info("Todos os targets já estavam na fila");
       } else if (skipped > 0) {
-        toast.success(`${added} targets adicionados (${skipped} já existiam na fila)`);
+        toast.success(`${added} targets adicionados (${skipped} já existiam) — Fila sincronizada!`);
       } else {
-        toast.success(`${added} targets adicionados à fila com sucesso!`);
+        toast.success(`${added} targets adicionados — Fila sincronizada com a extensão!`);
       }
       onInjected();
       onClose();

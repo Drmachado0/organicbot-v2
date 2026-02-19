@@ -71,6 +71,8 @@ export interface BotCommand {
   status: string;
   created_at: string | null;
   executed_at: string | null;
+  params?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
 }
 
 export interface DashboardData {
@@ -92,6 +94,8 @@ export interface DashboardData {
   isLoading: boolean;
   error: string | null;
   toggleBot: () => Promise<void>;
+  syncQueue: () => Promise<void>;
+  sendCommand: (command: string) => Promise<void>;
   refresh: () => void;
 }
 
@@ -164,7 +168,7 @@ export function useDashboardV2(): DashboardData {
         supabase.from("whitelist").select("id", { count: "exact", head: true }).eq("user_id", user.id),
         supabase.from("user_settings").select("automation_paused").eq("user_id", user.id).limit(1).maybeSingle(),
         accountId
-          ? supabase.from("bot_commands").select("id, command, status, created_at, executed_at").eq("ig_account_id", accountId).order("created_at", { ascending: false }).limit(5)
+          ? supabase.from("bot_commands").select("id, command, status, created_at, executed_at, params, result").eq("ig_account_id", accountId).order("created_at", { ascending: false }).limit(10)
           : Promise.resolve({ data: [], error: null }),
       ]);
 
@@ -250,6 +254,14 @@ export function useDashboardV2(): DashboardData {
           prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c))
         );
       })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bot_commands", filter: `ig_account_id=eq.${activeAccountId}` }, (payload) => {
+        const newCmd = payload.new as BotCommand;
+        setRecentCommands((prev) => [newCmd, ...prev].slice(0, 10));
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "ig_accounts", filter: `id=eq.${activeAccountId}` }, (payload) => {
+        const row = payload.new as DashboardAccount;
+        setAccounts((prev) => prev.map((a) => a.id === row.id ? { ...a, queue_total: row.queue_total, queue_processed: row.queue_processed, bot_online: row.bot_online, bot_status: row.bot_status } : a));
+      })
       .subscribe();
 
     return () => {
@@ -288,15 +300,35 @@ export function useDashboardV2(): DashboardData {
       // Refresh commands list
       const { data } = await supabase
         .from("bot_commands")
-        .select("id, command, status, created_at, executed_at")
+        .select("id, command, status, created_at, executed_at, params, result")
         .eq("ig_account_id", activeAccountId)
         .order("created_at", { ascending: false })
-        .limit(5);
+        .limit(10);
       if (data) setRecentCommands(data as BotCommand[]);
     } catch {
       // silently fail — caller shows toast
     }
   }, [automationPaused, activeAccountId]);
+
+  const syncQueue = useCallback(async () => {
+    if (!activeAccountId) return;
+    const { error } = await supabase.rpc("send_bot_command", {
+      p_ig_account_id: activeAccountId,
+      p_command: "sync_queue",
+      p_params: {},
+    });
+    if (error) throw error;
+  }, [activeAccountId]);
+
+  const sendCommand = useCallback(async (command: string) => {
+    if (!activeAccountId) return;
+    const { error } = await supabase.rpc("send_bot_command", {
+      p_ig_account_id: activeAccountId,
+      p_command: command,
+      p_params: {},
+    });
+    if (error) throw error;
+  }, [activeAccountId]);
 
   const refresh = useCallback(() => {
     refreshCountRef.current++;
@@ -324,6 +356,8 @@ export function useDashboardV2(): DashboardData {
     isLoading,
     error,
     toggleBot,
+    syncQueue,
+    sendCommand,
     refresh,
   };
 }

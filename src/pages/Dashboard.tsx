@@ -13,8 +13,9 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Play,
@@ -25,10 +26,15 @@ import {
   CheckCircle,
   AlertCircle,
   Terminal,
+  Zap,
+  SquareTerminal,
+  StopCircle,
+  Settings2,
 } from "lucide-react";
 
 export default function Dashboard() {
   const [searchParams] = useSearchParams();
+  const [stopConfirm, setStopConfirm] = useState(false);
   const {
     accounts,
     activeAccountId,
@@ -48,6 +54,8 @@ export default function Dashboard() {
     isLoading,
     error,
     toggleBot,
+    syncQueue,
+    sendCommand,
     refresh,
   } = useDashboardV2();
 
@@ -151,6 +159,30 @@ export default function Dashboard() {
             <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           </Button>
 
+          {/* Sync Queue */}
+          {!isLoading && activeAccountId && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 border-border/60"
+                  onClick={async () => {
+                    try {
+                      await syncQueue();
+                      toast.success("Comando sync_queue enviado para a extensão");
+                    } catch {
+                      toast.error("Erro ao sincronizar fila");
+                    }
+                  }}
+                >
+                  <Zap className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Sincronizar Fila agora</TooltipContent>
+            </Tooltip>
+          )}
+
           {/* Toggle bot */}
           {isLoading ? (
             <Skeleton className="h-9 w-36" />
@@ -180,6 +212,7 @@ export default function Dashboard() {
           )}
         </header>
 
+
         {/* ── Live Status Bar ── */}
         <LiveStatusBar account={account} />
 
@@ -194,6 +227,11 @@ export default function Dashboard() {
             icon={<List className="h-4 w-4" />}
             badge={pendingQueueCount > 500 ? { label: "Alta", variant: "destructive" } : undefined}
             isLoading={isLoading}
+            progress={
+              account?.queue_total && account.queue_total > 0
+                ? { current: account.queue_processed ?? 0, total: account.queue_total }
+                : undefined
+            }
           />
 
           <KpiCard
@@ -248,60 +286,163 @@ export default function Dashboard() {
         {/* ── Row 6: Recent Bot Commands ── */}
         {(recentCommands.length > 0 || isLoading) && (
           <div className="glass-card rounded-2xl p-5 animate-fade-in">
-            <div className="flex items-center gap-2 mb-4">
+            {/* Header + quick actions */}
+            <div className="flex flex-wrap items-center gap-2 mb-4">
               <Terminal className="h-4 w-4 text-muted-foreground" />
-              <p className="text-sm font-semibold">Comandos Recentes do Bot</p>
+              <p className="text-sm font-semibold flex-1">Comandos Recentes do Bot</p>
+              {!isLoading && activeAccountId && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2.5 text-xs gap-1 border-border/60"
+                        onClick={async () => { try { await sendCommand("start"); toast.success("Comando start enviado"); } catch { toast.error("Erro ao enviar start"); } }}
+                      >
+                        <Play className="h-3 w-3" style={{ color: "hsl(152 72% 48%)" }} /> Start
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Iniciar bot</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2.5 text-xs gap-1 border-border/60"
+                        onClick={async () => { try { await sendCommand("pause"); toast.success("Comando pause enviado"); } catch { toast.error("Erro ao enviar pause"); } }}
+                      >
+                        <Pause className="h-3 w-3" style={{ color: "hsl(42 96% 56%)" }} /> Pause
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Pausar bot</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={`h-7 px-2.5 text-xs gap-1 border-border/60 ${stopConfirm ? "border-destructive text-destructive" : ""}`}
+                        onClick={async () => {
+                          if (!stopConfirm) { setStopConfirm(true); setTimeout(() => setStopConfirm(false), 3000); return; }
+                          setStopConfirm(false);
+                          try { await sendCommand("stop"); toast.success("Comando stop enviado"); } catch { toast.error("Erro ao enviar stop"); }
+                        }}
+                      >
+                        <StopCircle className="h-3 w-3" style={{ color: "hsl(0 72% 55%)" }} />
+                        {stopConfirm ? "Confirmar?" : "Stop"}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Parar bot (clique 2x para confirmar)</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2.5 text-xs gap-1 border-border/60"
+                        onClick={async () => { try { await syncQueue(); toast.success("sync_queue enviado"); } catch { toast.error("Erro ao sincronizar fila"); } }}
+                      >
+                        <Zap className="h-3 w-3" style={{ color: "hsl(252 62% 60%)" }} /> Sync Fila
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Sincronizar fila agora</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2.5 text-xs gap-1 border-border/60"
+                        onClick={async () => { try { await sendCommand("sync_settings"); toast.success("sync_settings enviado"); } catch { toast.error("Erro ao sincronizar configurações"); } }}
+                      >
+                        <Settings2 className="h-3 w-3" style={{ color: "hsl(210 40% 70%)" }} /> Sync Config
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Forçar releitura de configurações</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-muted-foreground"
+                        onClick={refresh}
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Atualizar lista</TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
             </div>
             {isLoading ? (
               <div className="space-y-2">
                 {[1, 2, 3].map((i) => <div key={i} className="h-8 rounded-lg bg-muted/30 animate-pulse" />)}
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
                 {recentCommands.map((cmd) => (
-                  <div
-                    key={cmd.id}
-                    className="flex items-center justify-between px-3 py-2 rounded-lg text-xs"
-                    style={{ backgroundColor: "hsl(220 18% 10%)" }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                        style={{
-                          backgroundColor:
-                            cmd.status === "executed" ? "hsl(152 72% 48%)" :
-                            cmd.status === "pending" ? "hsl(42 96% 56%)" :
-                            "hsl(0 72% 55%)",
-                        }}
-                      />
-                      <span className="font-mono font-semibold capitalize">{cmd.command}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span
-                        className="text-xs capitalize px-1.5 py-0.5 rounded-full"
-                        style={{
-                          backgroundColor:
-                            cmd.status === "executed" ? "hsl(152 72% 48% / 0.12)" :
-                            cmd.status === "pending" ? "hsl(42 96% 56% / 0.12)" :
-                            "hsl(0 72% 55% / 0.12)",
-                          color:
-                            cmd.status === "executed" ? "hsl(152 72% 48%)" :
-                            cmd.status === "pending" ? "hsl(42 96% 56%)" :
-                            "hsl(0 72% 55%)",
-                        }}
+                  <Tooltip key={cmd.id}>
+                    <TooltipTrigger asChild>
+                      <div
+                        className="flex items-center justify-between px-3 py-2 rounded-lg text-xs cursor-default"
+                        style={{ backgroundColor: "hsl(220 18% 10%)" }}
                       >
-                        {cmd.status}
-                      </span>
-                      <span className="text-muted-foreground tabular-nums">
-                        {cmd.created_at ? new Date(cmd.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"}
-                      </span>
-                    </div>
-                  </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                            style={{
+                              backgroundColor:
+                                cmd.status === "executed" ? "hsl(152 72% 48%)" :
+                                cmd.status === "pending" ? "hsl(42 96% 56%)" :
+                                "hsl(0 72% 55%)",
+                            }}
+                          />
+                          <SquareTerminal className="h-3 w-3 text-muted-foreground" />
+                          <span className="font-mono font-semibold capitalize">{cmd.command}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span
+                            className="text-xs capitalize px-1.5 py-0.5 rounded-full"
+                            style={{
+                              backgroundColor:
+                                cmd.status === "executed" ? "hsl(152 72% 48% / 0.12)" :
+                                cmd.status === "pending" ? "hsl(42 96% 56% / 0.12)" :
+                                "hsl(0 72% 55% / 0.12)",
+                              color:
+                                cmd.status === "executed" ? "hsl(152 72% 48%)" :
+                                cmd.status === "pending" ? "hsl(42 96% 56%)" :
+                                "hsl(0 72% 55%)",
+                            }}
+                          >
+                            {cmd.status}
+                          </span>
+                          <span className="text-muted-foreground tabular-nums">
+                            {cmd.created_at ? new Date(cmd.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    </TooltipTrigger>
+                    {(cmd.result || cmd.params) && (
+                      <TooltipContent side="left" className="max-w-xs text-xs font-mono">
+                        {cmd.params && Object.keys(cmd.params).length > 0 && (
+                          <p><span className="text-muted-foreground">params:</span> {JSON.stringify(cmd.params)}</p>
+                        )}
+                        {cmd.result && Object.keys(cmd.result).length > 0 && (
+                          <p><span className="text-muted-foreground">result:</span> {JSON.stringify(cmd.result)}</p>
+                        )}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
                 ))}
               </div>
             )}
           </div>
         )}
+
       </div>
     </AppShell>
   );
