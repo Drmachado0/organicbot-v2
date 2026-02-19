@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { LayoutDashboard, Target, BarChart2, LogOut, Zap } from "lucide-react";
+import { LayoutDashboard, Target, BarChart2, Settings, LogOut, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +9,7 @@ const navItems = [
   { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/campaigns", icon: Target, label: "Campanhas" },
   { to: "/reports", icon: BarChart2, label: "Relatórios" },
+  { to: "/settings", icon: Settings, label: "Configurações" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

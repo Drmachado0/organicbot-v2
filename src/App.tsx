@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
 import Campaigns from "./pages/Campaigns";
 import Reports from "./pages/Reports";
+import BotSettings from "./pages/Settings";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
@@ -43,6 +44,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <Reports />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <BotSettings />
               </ProtectedRoute>
             }
           />
