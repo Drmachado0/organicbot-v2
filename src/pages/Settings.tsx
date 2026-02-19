@@ -47,6 +47,40 @@ import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+const WEEK_DAYS = [
+  { key: "mon", label: "Segunda" },
+  { key: "tue", label: "Terça" },
+  { key: "wed", label: "Quarta" },
+  { key: "thu", label: "Quinta" },
+  { key: "fri", label: "Sexta" },
+  { key: "sat", label: "Sábado" },
+  { key: "sun", label: "Domingo" },
+] as const;
+
+type DayKey = (typeof WEEK_DAYS)[number]["key"];
+
+interface DaySchedule {
+  active: boolean;
+  start: string;   // "HH:MM"
+  stop: string;    // "HH:MM"
+  follows: number;
+  likes: number;
+}
+
+type WeekSchedule = Record<DayKey, DaySchedule>;
+
+const DEFAULT_DAY: DaySchedule = { active: true, start: "09:00", stop: "22:00", follows: 60, likes: 120 };
+
+const DEFAULT_WEEK_SCHEDULE: WeekSchedule = {
+  mon: { ...DEFAULT_DAY },
+  tue: { ...DEFAULT_DAY },
+  wed: { ...DEFAULT_DAY },
+  thu: { ...DEFAULT_DAY },
+  fri: { ...DEFAULT_DAY },
+  sat: { ...DEFAULT_DAY, follows: 40, likes: 80 },
+  sun: { ...DEFAULT_DAY, follows: 40, likes: 80 },
+};
+
 interface BotSettings {
   // Limits
   follow_daily_limit: number;
@@ -59,8 +93,8 @@ interface BotSettings {
   bot_mode: string;
   likes_per_follow: number;
   max_actions_per_session: number;
-  // Schedule (24 slots, true = active)
-  schedule_hours: boolean[];
+  // Schedule per weekday
+  week_schedule: WeekSchedule;
   // Filters
   dont_unfollow_followers: boolean;
   dont_unfollow_fresh: boolean;
@@ -84,7 +118,7 @@ const DEFAULTS: BotSettings = {
   bot_mode: "seguir_curtir",
   likes_per_follow: 2,
   max_actions_per_session: 50,
-  schedule_hours: Array(24).fill(true),
+  week_schedule: DEFAULT_WEEK_SCHEDULE,
   dont_unfollow_followers: true,
   dont_unfollow_fresh: true,
   dont_unfollow_fresh_days: 3,
@@ -99,20 +133,43 @@ const DEFAULTS: BotSettings = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Convert 24-bool array → bot_schedule object that extension reads */
-function scheduleHoursToBotSchedule(hours: boolean[]): object {
-  const activeIndices = hours.map((h, i) => h ? i : -1).filter(i => i >= 0);
-  const firstActive = activeIndices[0] ?? -1;
-  const lastActive = activeIndices[activeIndices.length - 1] ?? -1;
-  const enabled = firstActive >= 0;
-  const start = enabled ? `${String(firstActive).padStart(2, "0")}:00` : "09:00";
-  const stop = enabled ? `${String(Math.min(lastActive + 1, 24)).padStart(2, "0")}:00` : "18:00";
-  const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-  const days = dayKeys.reduce((acc, day) => {
-    acc[day] = { active: enabled, start, stop, follows: 60, likes: 120, mode: "seguir_curtir" };
-    return acc;
-  }, {} as Record<string, unknown>);
-  return { enabled, timezone: "America/Sao_Paulo", days };
+/** Convert WeekSchedule → bot_schedule object that the extension reads */
+function weekScheduleToBotSchedule(week: WeekSchedule): object {
+  const activeDays = WEEK_DAYS.filter((d) => week[d.key].active);
+  return {
+    enabled: activeDays.length > 0,
+    timezone: "America/Sao_Paulo",
+    days: WEEK_DAYS.reduce((acc, { key }) => {
+      acc[key] = {
+        active: week[key].active,
+        start: week[key].start,
+        stop: week[key].stop,
+        follows: week[key].follows,
+        likes: week[key].likes,
+        mode: "seguir_curtir",
+      };
+      return acc;
+    }, {} as Record<string, unknown>),
+  };
+}
+
+/** Try to parse a bot_schedule.days object back into WeekSchedule */
+function parseBotScheduleDays(days: unknown): WeekSchedule | null {
+  if (!days || typeof days !== "object") return null;
+  const d = days as Record<string, unknown>;
+  const result: Partial<WeekSchedule> = {};
+  for (const { key } of WEEK_DAYS) {
+    const entry = d[key] as Record<string, unknown> | undefined;
+    if (!entry) return null;
+    result[key] = {
+      active: Boolean(entry.active ?? true),
+      start: typeof entry.start === "string" ? entry.start : "09:00",
+      stop: typeof entry.stop === "string" ? entry.stop : "22:00",
+      follows: Number(entry.follows ?? 60),
+      likes: Number(entry.likes ?? 120),
+    };
+  }
+  return result as WeekSchedule;
 }
 
 const BOT_MODES = [
@@ -132,10 +189,15 @@ const SAFETY_PRESETS = [
 function parseSettings(raw: Record<string, unknown> | null): BotSettings {
   if (!raw) return { ...DEFAULTS };
 
-  // Parse schedule_hours from raw or build from boolean array
-  let schedule_hours: boolean[] = Array(24).fill(true);
-  if (Array.isArray(raw.schedule_hours) && raw.schedule_hours.length === 24) {
-    schedule_hours = raw.schedule_hours.map(Boolean);
+  // Try to parse week_schedule from saved settings or from bot_schedule.days
+  let week_schedule: WeekSchedule = DEFAULT_WEEK_SCHEDULE;
+  if (raw.week_schedule && typeof raw.week_schedule === "object") {
+    const parsed = parseBotScheduleDays((raw.week_schedule as Record<string, unknown>));
+    if (parsed) week_schedule = parsed;
+  } else if (raw.bot_schedule && typeof raw.bot_schedule === "object") {
+    const sched = raw.bot_schedule as Record<string, unknown>;
+    const parsed = parseBotScheduleDays(sched.days);
+    if (parsed) week_schedule = parsed;
   }
 
   return {
@@ -147,7 +209,7 @@ function parseSettings(raw: Record<string, unknown> | null): BotSettings {
     bot_mode: String(raw.bot_mode ?? DEFAULTS.bot_mode),
     likes_per_follow: Number(raw.likes_per_follow ?? DEFAULTS.likes_per_follow),
     max_actions_per_session: Number(raw.max_actions_per_session ?? DEFAULTS.max_actions_per_session),
-    schedule_hours,
+    week_schedule,
     dont_unfollow_followers: Boolean(raw.dont_unfollow_followers ?? DEFAULTS.dont_unfollow_followers),
     dont_unfollow_fresh: Boolean(raw.dont_unfollow_fresh ?? DEFAULTS.dont_unfollow_fresh),
     dont_unfollow_fresh_days: Number(raw.dont_unfollow_fresh_days ?? DEFAULTS.dont_unfollow_fresh_days),
@@ -886,7 +948,7 @@ export default function BotSettings() {
     if (!user) return;
     setIsSaving(true);
     try {
-      const botSchedule = scheduleHoursToBotSchedule(settings.schedule_hours);
+      const botSchedule = weekScheduleToBotSchedule(settings.week_schedule);
 
       // 1. Save to user_settings (all settings)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -930,14 +992,16 @@ export default function BotSettings() {
     set("delay_max", Math.max(v, settings.delay_min + 5));
   };
 
-  // ── Schedule hour toggle ──
-  const toggleHour = (h: number) => {
-    const next = [...settings.schedule_hours];
-    next[h] = !next[h];
-    set("schedule_hours", next);
-  };
+  // ── Week schedule helpers ──
+  const setDaySchedule = useCallback((day: DayKey, patch: Partial<DaySchedule>) => {
+    setSettings((prev) => ({
+      ...prev,
+      week_schedule: { ...prev.week_schedule, [day]: { ...prev.week_schedule[day], ...patch } },
+    }));
+    setIsDirty(true);
+  }, []);
 
-  const activeHours = settings.schedule_hours.filter(Boolean).length;
+  const activeDays = WEEK_DAYS.filter((d) => settings.week_schedule[d.key].active).length;
 
   return (
     <AppShell>
@@ -1167,64 +1231,123 @@ export default function BotSettings() {
 
           {/* ── Schedule ── */}
           <SectionCard
-            title={`Horários de Operação — ${activeHours}h ativas de 24h`}
+            title={`Horários de Operação — ${activeDays} dia${activeDays !== 1 ? "s" : ""} ativos`}
             icon={<Clock className="h-4 w-4" style={{ color: "hsl(252 62% 60%)" }} />}
           >
-            <div className="space-y-3">
-              {/* Quick toggles */}
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { label: "Dia (6h–18h)", range: [6, 18] },
-                  { label: "Noite (18h–6h)", range: [18, 24, 0, 6] },
-                  { label: "Todas", range: null },
-                  { label: "Nenhuma", range: [] },
-                ].map(({ label, range }) => (
-                  <button
-                    key={label}
-                    onClick={() => {
-                      const next = Array(24).fill(false);
-                      if (range === null) {
-                        set("schedule_hours", Array(24).fill(true));
-                      } else if ((range as number[]).length === 0) {
-                        set("schedule_hours", Array(24).fill(false));
-                      } else {
-                        const [s1, e1, s2, e2] = range as number[];
-                        for (let i = s1; i < e1; i++) next[i] = true;
-                        if (s2 !== undefined) for (let i = s2; i < e2; i++) next[i] = true;
-                        set("schedule_hours", next);
-                      }
-                    }}
-                    className="px-2.5 py-1 rounded-md text-xs font-medium border border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-                  >
-                    {label}
-                  </button>
-                ))}
+            {/* Quick presets */}
+            <div className="flex flex-wrap gap-2 -mt-1">
+              {[
+                { label: "Dias úteis", days: ["mon", "tue", "wed", "thu", "fri"] as DayKey[], weekend: false },
+                { label: "Todos os dias", days: WEEK_DAYS.map((d) => d.key) as DayKey[], weekend: true },
+                { label: "Fim de semana", days: ["sat", "sun"] as DayKey[], weekend: true },
+              ].map(({ label, days }) => (
+                <button
+                  key={label}
+                  onClick={() => {
+                    const allKeys = WEEK_DAYS.map((d) => d.key) as DayKey[];
+                    setSettings((prev) => ({
+                      ...prev,
+                      week_schedule: allKeys.reduce((acc, k) => {
+                        acc[k] = { ...prev.week_schedule[k], active: days.includes(k) };
+                        return acc;
+                      }, {} as WeekSchedule),
+                    }));
+                    setIsDirty(true);
+                  }}
+                  className="px-2.5 py-1 rounded-md text-xs font-medium border border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Table */}
+            <div className="space-y-2">
+              {/* Header */}
+              <div className="grid grid-cols-[6rem_2.5rem_5.5rem_5.5rem_4.5rem_4.5rem] gap-x-3 items-center px-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Dia</span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide text-center">On</span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Início</span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Fim</span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide text-right">Follows</span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide text-right">Likes</span>
               </div>
 
-              {/* Hour grid */}
-              <div className="grid grid-cols-12 gap-1 sm:gap-1.5">
-                {Array.from({ length: 24 }, (_, h) => (
-                  <button
-                    key={h}
-                    onClick={() => toggleHour(h)}
-                    title={`${String(h).padStart(2, "0")}:00`}
+              {WEEK_DAYS.map(({ key, label }) => {
+                const day = settings.week_schedule[key];
+                return (
+                  <div
+                    key={key}
                     className={cn(
-                      "rounded-md py-2 sm:py-2.5 text-xs font-medium transition-all",
-                      settings.schedule_hours[h]
-                        ? "text-background"
-                        : "bg-muted/30 text-muted-foreground/50 hover:bg-muted/60"
+                      "grid grid-cols-[6rem_2.5rem_5.5rem_5.5rem_4.5rem_4.5rem] gap-x-3 items-center px-3 py-2 rounded-xl transition-colors",
+                      day.active
+                        ? "border border-primary/20"
+                        : "opacity-50"
                     )}
-                    style={settings.schedule_hours[h] ? { backgroundColor: "hsl(252 62% 60%)", boxShadow: "0 0 8px hsl(252 62% 60% / 0.3)" } : {}}
+                    style={day.active ? { backgroundColor: "hsl(252 62% 60% / 0.06)" } : { backgroundColor: "hsl(220 18% 10%)" }}
                   >
-                    {h}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Clique em um horário para ativar/desativar. Horas em roxo = bot ativo.
-              </p>
+                    {/* Day name */}
+                    <span className="text-xs font-medium">{label}</span>
+
+                    {/* Active toggle */}
+                    <div className="flex justify-center">
+                      <Switch
+                        checked={day.active}
+                        onCheckedChange={(v) => setDaySchedule(key, { active: v })}
+                        className="scale-75 origin-left"
+                      />
+                    </div>
+
+                    {/* Start time */}
+                    <input
+                      type="time"
+                      value={day.start}
+                      disabled={!day.active}
+                      onChange={(e) => setDaySchedule(key, { start: e.target.value })}
+                      className="w-full h-7 rounded-md border border-border/40 bg-background px-2 text-xs tabular-nums disabled:opacity-40 focus:border-primary/60 focus:outline-none"
+                    />
+
+                    {/* Stop time */}
+                    <input
+                      type="time"
+                      value={day.stop}
+                      disabled={!day.active}
+                      onChange={(e) => setDaySchedule(key, { stop: e.target.value })}
+                      className="w-full h-7 rounded-md border border-border/40 bg-background px-2 text-xs tabular-nums disabled:opacity-40 focus:border-primary/60 focus:outline-none"
+                    />
+
+                    {/* Follows/day */}
+                    <input
+                      type="number"
+                      min={0}
+                      max={500}
+                      step={10}
+                      value={day.follows}
+                      disabled={!day.active}
+                      onChange={(e) => setDaySchedule(key, { follows: Math.max(0, Math.min(500, Number(e.target.value))) })}
+                      className="w-full h-7 rounded-md border border-border/40 bg-background px-2 text-xs text-right tabular-nums disabled:opacity-40 focus:border-primary/60 focus:outline-none"
+                    />
+
+                    {/* Likes/day */}
+                    <input
+                      type="number"
+                      min={0}
+                      max={1000}
+                      step={10}
+                      value={day.likes}
+                      disabled={!day.active}
+                      onChange={(e) => setDaySchedule(key, { likes: Math.max(0, Math.min(1000, Number(e.target.value))) })}
+                      className="w-full h-7 rounded-md border border-border/40 bg-background px-2 text-xs text-right tabular-nums disabled:opacity-40 focus:border-primary/60 focus:outline-none"
+                    />
+                  </div>
+                );
+              })}
             </div>
+            <p className="text-xs text-muted-foreground pt-1">
+              O agendamento é convertido para <code className="text-[10px] bg-muted/40 px-1 rounded">bot_schedule.days</code> e sincronizado com a extensão no save.
+            </p>
           </SectionCard>
+
 
           {/* ── My Account ── */}
           {user && <MyAccountSection user={{ id: user.id, email: user.email ?? "" }} />}
@@ -1320,7 +1443,7 @@ export default function BotSettings() {
                     { label: "Unfollow/dia", value: settings.unfollow_daily_limit, color: "hsl(0 72% 55%)" },
                     { label: "Like/dia", value: settings.like_daily_limit, color: "hsl(320 65% 60%)" },
                     { label: "Delay", value: `${settings.delay_min}–${settings.delay_max}s`, color: "hsl(42 96% 56%)" },
-                    { label: "Horas ativas", value: `${activeHours}h`, color: "hsl(252 62% 60%)" },
+                    { label: "Dias ativos", value: `${activeDays}/7`, color: "hsl(252 62% 60%)" },
                     { label: "Proteções", value: [settings.dont_unfollow_followers, settings.dont_unfollow_fresh, settings.dont_unfollow_non_organicbot].filter(Boolean).length + "/3", color: "hsl(215 20% 55%)" },
                   ].map(({ label, value, color }) => (
                     <div key={label} className="flex items-center justify-between">
