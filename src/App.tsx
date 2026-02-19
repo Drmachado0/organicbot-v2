@@ -10,6 +10,8 @@ import Auth from "./pages/Auth";
 import Campaigns from "./pages/Campaigns";
 import Reports from "./pages/Reports";
 import BotSettings from "./pages/Settings";
+import Whitelist from "./pages/Whitelist";
+import Actions from "./pages/Actions";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
@@ -52,6 +54,22 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <BotSettings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/whitelist"
+            element={
+              <ProtectedRoute>
+                <Whitelist />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/actions"
+            element={
+              <ProtectedRoute>
+                <Actions />
               </ProtectedRoute>
             }
           />
