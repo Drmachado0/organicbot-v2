@@ -38,6 +38,9 @@ import {
   Trash2,
   Plus,
   CircuitBoard,
+  User,
+  KeyRound,
+  CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -193,6 +196,177 @@ interface IgAccount {
   followers_count: number | null;
   last_heartbeat: string | null;
   device_id: string | null;
+}
+
+// ─── My Account Section ───────────────────────────────────────────────────────
+
+function MyAccountSection({ user }: { user: { id: string; email?: string } }) {
+  const [fullName, setFullName] = useState("");
+  const [loadingName, setLoadingName] = useState(true);
+  const [savingName, setSavingName] = useState(false);
+
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [showPasswords, setShowPasswords] = useState(false);
+
+  useEffect(() => {
+    supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        setFullName(data?.full_name ?? "");
+        setLoadingName(false);
+      });
+  }, [user.id]);
+
+  const handleSaveName = async () => {
+    const trimmed = fullName.trim();
+    if (trimmed.length > 100) { toast.error("Nome muito longo (máx. 100 caracteres)"); return; }
+    setSavingName(true);
+    try {
+      const { error: authError } = await supabase.auth.updateUser({ data: { full_name: trimmed } });
+      if (authError) throw authError;
+      const { error: dbError } = await supabase.from("profiles").update({ full_name: trimmed }).eq("id", user.id);
+      if (dbError) throw dbError;
+      toast.success("Nome atualizado com sucesso!");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao salvar nome");
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const handleSavePassword = async () => {
+    if (newPassword.length < 6) { toast.error("A nova senha deve ter ao menos 6 caracteres"); return; }
+    if (newPassword !== confirmPassword) { toast.error("As senhas não coincidem"); return; }
+    setSavingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      toast.success("Senha atualizada com sucesso!");
+      setNewPassword(""); setConfirmPassword("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao atualizar senha");
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+
+  const initials = fullName.trim()
+    ? fullName.trim().split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase()
+    : (user.email?.[0] ?? "U").toUpperCase();
+
+  return (
+    <SectionCard
+      title="Minha Conta"
+      icon={<User className="h-4 w-4" style={{ color: "hsl(215 72% 60%)" }} />}
+    >
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* ── Name form ── */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+              style={{ backgroundColor: "hsl(215 72% 60% / 0.15)", color: "hsl(215 72% 60%)", border: "1px solid hsl(215 72% 60% / 0.3)" }}
+            >
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold truncate">{fullName || "Sem nome"}</p>
+              <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Nome completo</Label>
+            {loadingName ? (
+              <div className="h-10 rounded-md bg-muted/30 animate-pulse" />
+            ) : (
+              <Input
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Seu nome"
+                maxLength={100}
+                onKeyDown={(e) => e.key === "Enter" && handleSaveName()}
+              />
+            )}
+          </div>
+
+          <Button
+            size="sm"
+            onClick={handleSaveName}
+            disabled={savingName || loadingName}
+            className="gap-1.5 w-full"
+            style={{ backgroundColor: "hsl(215 72% 60%)", color: "white" }}
+          >
+            {savingName ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Salvar nome
+          </Button>
+        </div>
+
+        {/* ── Password form ── */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 pb-1 border-b border-border/20">
+            <KeyRound className="h-4 w-4" style={{ color: "hsl(42 96% 56%)" }} />
+            <p className="text-sm font-medium">Alterar senha</p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Nova senha</Label>
+              <Input
+                type={showPasswords ? "text" : "password"}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Mínimo 6 caracteres"
+                maxLength={128}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Confirmar nova senha</Label>
+              <Input
+                type={showPasswords ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Repita a nova senha"
+                maxLength={128}
+                onKeyDown={(e) => e.key === "Enter" && handleSavePassword()}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPasswords((v) => !v)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showPasswords ? "Ocultar senhas" : "Mostrar senhas"}
+            </button>
+          </div>
+
+          {newPassword && confirmPassword && (
+            <p className={`text-xs flex items-center gap-1 ${newPassword === confirmPassword ? "text-green-500" : "text-destructive"}`}>
+              <CheckCircle2 className="h-3 w-3" />
+              {newPassword === confirmPassword ? "Senhas coincidem" : "As senhas não coincidem"}
+            </p>
+          )}
+
+          <Button
+            size="sm"
+            onClick={handleSavePassword}
+            disabled={savingPassword || !newPassword || !confirmPassword}
+            className="gap-1.5 w-full"
+            style={{ backgroundColor: "hsl(42 96% 56%)", color: "hsl(222 25% 6%)" }}
+          >
+            {savingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+            Atualizar senha
+          </Button>
+        </div>
+      </div>
+    </SectionCard>
+  );
 }
 
 function InstagramAccountsSection({ userId }: { userId: string }) {
@@ -662,6 +836,9 @@ export default function BotSettings() {
               </p>
             </div>
           </SectionCard>
+
+          {/* ── My Account ── */}
+          {user && <MyAccountSection user={{ id: user.id, email: user.email ?? "" }} />}
 
           {/* ── Instagram Accounts ── */}
           {user && <InstagramAccountsSection userId={user.id} />}
