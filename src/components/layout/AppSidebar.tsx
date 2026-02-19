@@ -15,6 +15,7 @@ import {
   ChevronRight,
   User,
   Chrome,
+  ListOrdered,
 } from "lucide-react";
 import {
   Sidebar,
@@ -35,6 +36,7 @@ const navItems = [
   { to: "/reports",    icon: BarChart2,        label: "Relatórios"    },
   { to: "/whitelist",  icon: Shield,           label: "Whitelist"     },
   { to: "/actions",    icon: List,             label: "Log de Ações"  },
+  { to: "/queue",      icon: ListOrdered,      label: "Fila de Targets" },
   { to: "/extension",  icon: Chrome,           label: "Extensão"      },
   { to: "/settings",   icon: Settings,         label: "Configurações" },
 ];
