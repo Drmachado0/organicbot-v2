@@ -41,6 +41,7 @@ import {
   User,
   KeyRound,
   CheckCircle2,
+  Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -366,6 +367,88 @@ function MyAccountSection({ user }: { user: { id: string; email?: string } }) {
         </div>
       </div>
     </SectionCard>
+  );
+}
+
+function BridgeTokenSection({ accounts }: { accounts: { id: string; ig_username: string }[] }) {
+  const [selectedId, setSelectedId] = useState<string>(accounts[0]?.id ?? "");
+  const [token, setToken] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const generate = async () => {
+    if (!selectedId) return;
+    setGenerating(true);
+    try {
+      const { data, error } = await supabase.rpc("generate_bridge_token", { p_ig_account_id: selectedId });
+      if (error) throw error;
+      setToken(data as string);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao gerar token");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const copy = async () => {
+    if (!token) return;
+    await navigator.clipboard.writeText(token);
+    setCopied(true);
+    toast.success("Token copiado!");
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div
+      className="mt-4 rounded-xl p-4 space-y-3"
+      style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(252 62% 60% / 0.2)" }}
+    >
+      <div className="flex items-center gap-2">
+        <CircuitBoard className="h-4 w-4" style={{ color: "hsl(252 62% 60%)" }} />
+        <p className="text-sm font-medium">Bridge Token</p>
+      </div>
+
+      {accounts.length > 1 && (
+        <select
+          value={selectedId}
+          onChange={(e) => { setSelectedId(e.target.value); setToken(null); }}
+          className="w-full h-9 rounded-md border border-border/60 bg-background px-3 text-sm"
+        >
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>@{a.ig_username}</option>
+          ))}
+        </select>
+      )}
+
+      {token && (
+        <div
+          className="flex items-center gap-2 p-2 rounded-lg cursor-pointer"
+          style={{ backgroundColor: "hsl(220 18% 14%)", border: "1px solid hsl(220 18% 22%)" }}
+          onClick={copy}
+          title="Clique para copiar"
+        >
+          <code className="text-xs text-muted-foreground flex-1 truncate font-mono">{token}</code>
+          <div
+            className="flex-shrink-0 p-1 rounded"
+            style={{ color: copied ? "hsl(152 72% 48%)" : "hsl(215 20% 55%)" }}
+          >
+            {copied ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          </div>
+        </div>
+      )}
+
+      <Button
+        size="sm"
+        onClick={generate}
+        disabled={generating || !selectedId}
+        className="gap-1.5 w-full"
+        style={{ backgroundColor: "hsl(252 62% 60%)", color: "white" }}
+      >
+        {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CircuitBoard className="h-4 w-4" />}
+        {token ? "Gerar novo token" : "Gerar bridge token"}
+      </Button>
+      <p className="text-xs text-muted-foreground">Cole este token no bridge Android para autenticar a conexão.</p>
+    </div>
   );
 }
 
@@ -966,10 +1049,11 @@ export default function BotSettings() {
                 {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Salvar
               </Button>
-            </div>
+              </div>
           )}
         </div>
       )}
+      {accounts.length > 0 && <BridgeTokenSection accounts={accounts} />
     </AppShell>
   );
 }

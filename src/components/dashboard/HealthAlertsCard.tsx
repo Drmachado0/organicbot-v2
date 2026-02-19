@@ -1,5 +1,7 @@
-import { CheckCircle, AlertTriangle, Bell, Shield } from "lucide-react";
+import { useState, useEffect } from "react";
+import { CheckCircle, AlertTriangle, Bell, Shield, XCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { supabase } from "@/integrations/supabase/client";
 import type { TodayAction } from "@/hooks/useDashboardV2";
 
 interface Props {
@@ -7,55 +9,43 @@ interface Props {
   pendingQueueCount: number;
   botOnline: boolean;
   isLoading: boolean;
+  igAccountId?: string | null;
+  lastHeartbeat?: string | null;
 }
 
 interface Alert {
-  level: "ok" | "warn" | "info";
+  level: "ok" | "warn" | "error" | "info";
   message: string;
 }
 
 const LIMITS = { follow: 150, unfollow: 120, like: 300 };
 
-function buildAlerts(todayActions: TodayAction[], pendingQueueCount: number, botOnline: boolean): Alert[] {
-  const alerts: Alert[] = [];
-  const getCount = (type: string) => todayActions.find((a) => a.action_type.toLowerCase() === type)?.count ?? 0;
-
-  const follows = getCount("follow");
-  const unfollows = getCount("unfollow");
-  const likes = getCount("like");
-  const total = follows + unfollows + likes;
-
-  if (follows >= LIMITS.follow) alerts.push({ level: "warn", message: "Limite diário de Follow atingido" });
-  if (unfollows >= LIMITS.unfollow) alerts.push({ level: "warn", message: "Limite diário de Unfollow atingido" });
-  if (likes >= LIMITS.like) alerts.push({ level: "warn", message: "Limite diário de Like atingido" });
-
-  if (pendingQueueCount < 50 && pendingQueueCount >= 0) {
-    alerts.push({ level: "info", message: `Fila quase vazia (${pendingQueueCount} targets)` });
-  }
-
-  if (total > 0) {
-    const errorRate = 0; // would need real error tracking
-    if (errorRate > 0.2) alerts.push({ level: "warn", message: `Taxa de erro alta (${Math.round(errorRate * 100)}%)` });
-  }
-
-  if (alerts.length === 0 && botOnline) {
-    alerts.push({ level: "ok", message: "Bot funcionando normalmente" });
-  }
-
-  if (!botOnline) {
-    alerts.push({ level: "info", message: "Bot offline — nenhuma ação sendo executada" });
-  }
-
-  return alerts;
-}
-
 const LEVEL_CONFIG = {
-  ok: { Icon: CheckCircle, color: "hsl(152 72% 48%)", bg: "hsl(152 72% 48% / 0.1)" },
-  warn: { Icon: AlertTriangle, color: "hsl(42 96% 56%)", bg: "hsl(42 96% 56% / 0.1)" },
-  info: { Icon: Bell, color: "hsl(252 62% 60%)", bg: "hsl(252 62% 60% / 0.1)" },
+  ok:    { Icon: CheckCircle,   color: "hsl(152 72% 48%)", bg: "hsl(152 72% 48% / 0.1)" },
+  warn:  { Icon: AlertTriangle, color: "hsl(42 96% 56%)",  bg: "hsl(42 96% 56% / 0.1)"  },
+  error: { Icon: XCircle,       color: "hsl(0 72% 55%)",   bg: "hsl(0 72% 55% / 0.1)"   },
+  info:  { Icon: Bell,          color: "hsl(252 62% 60%)", bg: "hsl(252 62% 60% / 0.1)" },
 };
 
-export function HealthAlertsCard({ todayActions, pendingQueueCount, botOnline, isLoading }: Props) {
+export function HealthAlertsCard({ todayActions, pendingQueueCount, botOnline, isLoading, igAccountId, lastHeartbeat }: Props) {
+  const [errorRate, setErrorRate] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!igAccountId) return;
+    (async () => {
+      const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { data } = await supabase
+        .from("action_log")
+        .select("status")
+        .eq("ig_account_id", igAccountId)
+        .gte("executed_at", since)
+        .limit(200);
+      if (!data || data.length === 0) { setErrorRate(null); return; }
+      const failed = data.filter((r) => r.status === "failed").length;
+      setErrorRate(Math.round((failed / data.length) * 100));
+    })();
+  }, [igAccountId]);
+
   if (isLoading) {
     return (
       <div className="glass-card rounded-xl p-5">
@@ -65,7 +55,39 @@ export function HealthAlertsCard({ todayActions, pendingQueueCount, botOnline, i
     );
   }
 
-  const alerts = buildAlerts(todayActions, pendingQueueCount, botOnline);
+  const alerts: Alert[] = [];
+  const getCount = (type: string) => todayActions.find((a) => a.action_type.toLowerCase() === type)?.count ?? 0;
+  const follows = getCount("follow");
+  const unfollows = getCount("unfollow");
+  const likes = getCount("like");
+
+  // Bot status
+  if (!botOnline) {
+    alerts.push({ level: "error", message: "Bot offline — nenhuma ação em execução" });
+  } else if (lastHeartbeat) {
+    const diffMin = (Date.now() - new Date(lastHeartbeat).getTime()) / 60000;
+    if (diffMin > 15) alerts.push({ level: "warn", message: `Sem heartbeat há ${Math.round(diffMin)} min` });
+  }
+
+  // Daily limits
+  if (follows >= LIMITS.follow) alerts.push({ level: "warn", message: `Limite diário de Follow atingido (${follows})` });
+  else if (follows >= LIMITS.follow * 0.85) alerts.push({ level: "info", message: `Follow próximo do limite (${follows}/${LIMITS.follow})` });
+  if (unfollows >= LIMITS.unfollow) alerts.push({ level: "warn", message: `Limite diário de Unfollow atingido (${unfollows})` });
+  if (likes >= LIMITS.like) alerts.push({ level: "warn", message: `Limite diário de Like atingido (${likes})` });
+
+  // Queue
+  if (pendingQueueCount === 0) alerts.push({ level: "warn", message: "Fila de targets vazia" });
+  else if (pendingQueueCount < 50) alerts.push({ level: "info", message: `Fila quase vazia (${pendingQueueCount} targets)` });
+
+  // Error rate
+  if (errorRate !== null && errorRate > 30) alerts.push({ level: "error", message: `Taxa de erro alta na última hora: ${errorRate}%` });
+  else if (errorRate !== null && errorRate > 15) alerts.push({ level: "warn", message: `Taxa de erro elevada: ${errorRate}%` });
+
+  // All good
+  if (alerts.length === 0 && botOnline) {
+    alerts.push({ level: "ok", message: "Bot funcionando normalmente" });
+    if (pendingQueueCount > 0) alerts.push({ level: "ok", message: `${pendingQueueCount} targets na fila` });
+  }
 
   return (
     <div className="glass-card rounded-xl p-5 animate-fade-in flex flex-col gap-4">
