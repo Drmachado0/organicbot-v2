@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Play,
   Pause,
@@ -23,9 +25,11 @@ import {
   List,
   CheckCircle,
   AlertCircle,
+  LogOut,
 } from "lucide-react";
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const {
     accounts,
     activeAccountId,
@@ -50,6 +54,11 @@ export default function Dashboard() {
   useEffect(() => {
     if (error) toast.error(error);
   }, [error]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate("/login");
+  };
 
   const botActive = account?.bot_online && !automationPaused;
 
@@ -161,6 +170,17 @@ export default function Dashboard() {
               <span className="relative z-10">{botActive ? "Bot Ativo — Pausar" : "Iniciar Bot"}</span>
             </Button>
           )}
+
+          {/* Logout */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors"
+            onClick={handleLogout}
+            title="Sair"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
         </header>
 
         {/* ── Live Status Bar ── */}
