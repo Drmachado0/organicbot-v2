@@ -778,26 +778,90 @@ export default function QueuePage() {
       </div>
 
       {/* ── Import Modal ── */}
-      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+      <Dialog open={importOpen} onOpenChange={(open) => { setImportOpen(open); if (!open) setImportText(""); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">Importar Lista de Targets</DialogTitle>
           </DialogHeader>
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Cole os usernames abaixo, um por linha (com ou sem @):</p>
-            <textarea
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              placeholder={"@usuario1\n@usuario2\nusuario3"}
-              className="w-full h-48 text-xs rounded-lg border border-border bg-secondary p-3 text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p className="text-[10px] text-muted-foreground">
-              {importText.split("\n").filter((u) => u.trim()).length} username(s) detectado(s)
-            </p>
+          <div className="space-y-3">
+            {/* File upload drop zone */}
+            <label
+              className="flex flex-col items-center justify-center gap-2 w-full h-20 rounded-lg border-2 border-dashed border-border bg-secondary/50 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => setImportText((prev) => [prev, ev.target?.result as string].filter(Boolean).join("\n"));
+                reader.readAsText(file);
+              }}
+            >
+              <input
+                type="file"
+                accept=".txt,.csv,.text"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => setImportText((prev) => [prev, ev.target?.result as string].filter(Boolean).join("\n"));
+                  reader.readAsText(file);
+                  e.target.value = "";
+                }}
+              />
+              <Upload className="w-5 h-5 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">
+                Arraste um arquivo <span className="text-primary font-medium">.txt / .csv</span> ou clique para selecionar
+              </span>
+            </label>
+
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-[10px] text-muted-foreground">ou cole manualmente</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+
+            <div className="relative">
+              <textarea
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder={"@usuario1\n@usuario2\nusuario3"}
+                className="w-full h-40 text-xs rounded-lg border border-border bg-secondary p-3 text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              {importText && (
+                <button
+                  onClick={() => setImportText("")}
+                  className="absolute top-2 right-2 text-muted-foreground hover:text-foreground text-[10px] px-1.5 py-0.5 rounded border border-border bg-card"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] text-muted-foreground">
+                <span className="font-semibold text-foreground">
+                  {importText.split("\n").filter((u) => u.trim()).length}
+                </span>{" "}
+                username(s) detectado(s)
+              </p>
+              {importText.split("\n").filter((u) => u.trim()).length > 0 && (
+                <p className="text-[10px] text-primary">Pronto para importar</p>
+              )}
+            </div>
           </div>
           <DialogFooter>
-            <Button size="sm" variant="ghost" onClick={() => setImportOpen(false)}>Cancelar</Button>
-            <Button size="sm" onClick={handleImport} disabled={!importText.trim()}>Importar</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setImportOpen(false); setImportText(""); }}>Cancelar</Button>
+            <Button
+              size="sm"
+              onClick={handleImport}
+              disabled={!importText.trim()}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Importar {importText.split("\n").filter((u) => u.trim()).length > 0 ? `(${importText.split("\n").filter((u) => u.trim()).length})` : ""}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
