@@ -14,6 +14,7 @@ import BotSettings from "./pages/Settings";
 import Whitelist from "./pages/Whitelist";
 import Actions from "./pages/Actions";
 import ExtensionPage from "./pages/Extension";
+import QueuePage from "./pages/Queue";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
@@ -73,6 +74,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <Actions />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/queue"
+            element={
+              <ProtectedRoute>
+                <QueuePage />
               </ProtectedRoute>
             }
           />
