@@ -1,153 +1,139 @@
 
-# Próximos Passos — O que ainda falta para o sistema ser completo
+# Nova Página: Gerenciamento de Fila (IG List Collector Clone)
 
-## Estado Atual (o que já funciona)
+## Objetivo
 
-- Dashboard com KPIs, gráficos, tabelas, sessões e alertas de saúde em tempo real
-- Notificação automática quando bot vai offline (toast + badge na topbar)
-- Configurações com dual-write para `ig_accounts` + `user_settings`
-- Seletor de modo do bot, presets de segurança, delays, likes_per_follow
-- Conversão de `schedule_hours[]` → `bot_schedule` para a extensão
-- Comando `sync_settings` corrigido
-- Página `/extension` com guia de instalação e status por heartbeat
-- Deep link `?account=@username` no dashboard
-- Badge online/offline na topbar em tempo real via Realtime
+Criar uma página dedicada `/queue` que replica a interface do "IG List Collector" da extensão, permitindo coletar, visualizar, importar, exportar e gerenciar a fila de targets (`target_queue`) diretamente no painel web.
 
 ---
 
-## O que ainda falta — por prioridade
+## Análise da Interface de Referência
 
-### 1. CRÍTICO — `queue_sync` manual por conta (sem essa função, o bot não processa targets)
+A imagem da extensão tem:
 
-A extensão processa targets da `target_queue`. Atualmente, quando o usuário vai em Campanhas e injeta targets, a extensão só os pega no próximo ciclo de sincronização (2 min). Não existe botão no dashboard para forçar a extensão a buscar a fila imediatamente com `sync_queue`.
-
-**O que fazer:**
-- No **Dashboard**, adicionar um botão "Sincronizar Fila" ao lado do botão "Iniciar Bot"
-- Ao clicar, envia `send_bot_command({ command: "sync_queue", p_ig_account_id: activeAccountId })`
-- O card de KPI "Fila Pendente" deve mostrar o número atualizado em tempo real
-- Na página **Campanhas**, no modal de "Injetar Targets", adicionar opção de enviar o comando `sync_queue` logo após a injeção
-
-### 2. ALTO — Indicador de progresso da fila por conta
-
-Atualmente, `ig_accounts.queue_total` e `ig_accounts.queue_processed` existem no banco e são atualizados pela extensão, mas o dashboard não os exibe como barra de progresso. O usuário não sabe quanto da fila já foi processado.
-
-**O que fazer:**
-- No **Dashboard**, no card "Fila Pendente" (KpiCard), adicionar uma barra de progresso `queue_processed / queue_total`
-- Atualizar via Realtime quando a extensão fizer UPDATE em `ig_accounts`
-- Mostrar percentual: "247 de 1.200 processados (21%)"
-
-### 3. ALTO — Histórico de comandos expandido com ações rápidas
-
-O painel "Comandos Recentes" no Dashboard mostra apenas 5 linhas e tem informação limitada. Não há como enviar um comando específico sem ir em Configurações.
-
-**O que fazer:**
-- Expandir o painel de comandos para 10 itens com scroll
-- Adicionar botões de ação rápida inline:
-  - **Start** / **Pause** / **Stop** (com confirmação para Stop)
-  - **Sync Queue** — força sincronização da fila
-  - **Sync Settings** — força releitura das configurações
-- Mostrar `params` do comando em tooltip ao passar o mouse
-- Mostrar `result` quando o status for `executed` ou `failed`
-
-### 4. MÉDIO — Painel de contas no Dashboard com status individual
-
-Com múltiplas contas, o usuário precisa ver o status de cada uma num único lugar. Atualmente só há um seletor de conta e o badge na topbar.
-
-**O que fazer:**
-- Adicionar uma grade de "Account Cards" no topo do Dashboard (antes do LiveStatusBar)
-- Cada card exibe: avatar, @username, badge online/offline, modo do bot, fila pendente, heartbeat
-- Clicar no card = selecionar essa conta como ativa
-- Atualizado via Realtime em `ig_accounts`
-
-### 5. MÉDIO — Agendamento visual por dia da semana
-
-O dashboard tem o grid de 24 horas (schedule_hours), mas não permite configurar horários diferentes por dia da semana — que é o que a extensão espera no `bot_schedule`.
-
-**O que fazer:**
-- Substituir o grid de 24 booleans por uma tabela de 7 linhas (dias) × toggle (ativo/inativo) + inputs de horário start/stop
-- Converter diretamente para o formato `bot_schedule.days` esperado pela extensão:
-  ```
-  { mon: { active: true, start: "09:00", stop: "18:00", follows: 60, likes: 120 } }
-  ```
-- Adicionar campos "follows/dia" e "likes/dia" por dia para controle fino
-
-### 6. BAIXO — Toast de "Bot voltou online"
-
-Atualmente, `useBotOfflineAlert` detecta a transição `true → false`. Não detecta a volta `false → true`.
-
-**O que fazer:**
-- Na mesma lógica do hook `useBotOfflineAlert.ts`, adicionar detecção da transição `false → true`
-- Disparar `toast.success("@username — Bot voltou online ✓")` com ícone verde
+- **2 abas**: Coletor | Leitor de Lista
+- **PERFIL ATUAL**: avatar, @username, seguidores, seguindo, status do ID
+- **Botões de detecção**: Re-detectar, API, Manual
+- **COLETAR**: Seguidores, Seguindo, #Hashtag, Localização
+- **FILA COLETADA**: contador + exportar (JSON, CSV, TXT)
+- **Importar Lista / Limpar Fila**
+- **FILTROS** (seção colapsável)
+- **CONFIGURAÇÕES**: delay, etc.
 
 ---
 
-## O que implementar neste passo
+## Arquitetura da Solução
 
-Proposta: implementar os itens **1, 2 e 3** juntos, pois formam o núcleo de controle operacional do bot:
+```text
+/queue  →  src/pages/Queue.tsx  (nova página)
+           ├── Aba 1: Coletor
+           │   ├── PERFIL ATUAL (conta selecionada)
+           │   ├── COLETAR (enviar comandos para extensão)
+           │   ├── FILA COLETADA (count + export)
+           │   ├── Importar Lista (modal)
+           │   ├── Limpar Fila (confirm)
+           │   ├── FILTROS (colapsável)
+           │   └── CONFIGURAÇÕES (delay)
+           └── Aba 2: Leitor de Lista
+               └── Tabela paginada com target_queue
+                   (filtros: status, source, busca)
+```
 
-### Arquivos a modificar
+---
 
-| Arquivo | Mudança |
+## Arquivos a Criar/Modificar
+
+| Arquivo | Operação | Mudança |
+|---|---|---|
+| `src/pages/Queue.tsx` | Criar | Página completa com 2 abas |
+| `src/App.tsx` | Editar | Adicionar rota `/queue` |
+| `src/components/layout/AppSidebar.tsx` | Editar | Adicionar item de nav "Fila" com ícone |
+
+---
+
+## Detalhes Técnicos
+
+### Aba 1 — Coletor
+
+**PERFIL ATUAL**: Lê da `ig_accounts` a conta selecionada. Exibe:
+- Avatar (profile_pic_url) com outline colorido (online/offline)
+- @username, followers_count, following_count
+- Badge de status: "ID detectado" (ig_user_id preenchido) ou "Sem ID — será buscado via API ao iniciar coleta"
+- Botão "Re-detectar" → envia `send_bot_command("sync_settings")`
+- Botão "API" → envia `send_bot_command("collect_via_api")`
+- Botão "Manual" → abre textarea para colar usernames
+
+**COLETAR**: 4 botões que enviam comandos ao bot via `send_bot_command()`:
+
+```typescript
+// Seguidores
+send_bot_command("collect_followers", {})
+// Seguindo
+send_bot_command("collect_following", {})
+// Hashtag
+send_bot_command("collect_hashtag", { hashtag: inputValue })
+// Localização
+send_bot_command("collect_location", { location: inputValue })
+```
+
+**FILA COLETADA**: Mostra `count` de targets `pending` da `target_queue`. Botões de exportação:
+- **JSON**: `JSON.stringify(rows)`
+- **CSV**: `username,source,created_at` por linha
+- **TXT**: uma linha por username
+
+**Importar Lista**: Modal com `<textarea>` para colar usernames (um por linha). Usa `add_targets_batch()` RPC do banco. Envia `sync_queue` ao finalizar.
+
+**Limpar Fila**: AlertDialog de confirmação → chama RPC `clear_target_queue(accountId, "pending")`.
+
+**FILTROS** (colapsável via `useState`):
+- Fonte: `manual`, `followers`, `following`, `hashtag`, `location`
+- Status: `pending`, `processing`, `done`, `skipped`
+
+**CONFIGURAÇÕES**:
+- Delay entre requisições (salva em `user_settings.settings_json.wait_after_action`)
+
+### Aba 2 — Leitor de Lista
+
+Tabela paginada da `target_queue` com:
+- Coluna: username, source (badge), status (badge colorido), priority, created_at, processed_at
+- Filtros: status, source, busca por username
+- Paginação: 50 por página
+- Realtime: subscription em `target_queue` para `INSERT` e `UPDATE`
+- Ações por linha: deletar target individual (soft delete via UPDATE status="skipped")
+
+### Seletor de Conta
+
+Dropdown no topo da página (igual ao de Campanhas/Actions) para selecionar a `ig_account_id` ativa.
+
+### Realtime
+
+Subscription em `target_queue` filtrado por `ig_account_id`:
+```typescript
+.on("postgres_changes", { event: "INSERT", table: "target_queue",
+  filter: `ig_account_id=eq.${accountId}` }, handler)
+.on("postgres_changes", { event: "UPDATE", table: "target_queue",
+  filter: `ig_account_id=eq.${accountId}` }, handler)
+```
+
+---
+
+## Visual — Fidelidade com a Extensão
+
+| Elemento da extensão | Implementação no painel |
 |---|---|
-| `src/pages/Dashboard.tsx` | Botão "Sincronizar Fila" + barra de progresso da fila no KPI |
-| `src/hooks/useDashboardV2.ts` | Adicionar `syncQueue()` ao hook + subscribe a UPDATE de `ig_accounts` para `queue_total`/`queue_processed` |
-| `src/components/dashboard/KpiCard.tsx` | Aceitar `progress?: { current: number; total: number }` para mostrar barra |
-| `src/pages/Campaigns.tsx` | Após injeção de targets, enviar `sync_queue` automaticamente |
-| `src/hooks/useBotOfflineAlert.ts` | Adicionar detecção de `false → true` (bot voltou online) |
+| Fundo escuro, bordas sutis | `glass-card` + dark theme existente |
+| Abas "Coletor / Leitor de Lista" | `Tabs` do Radix UI |
+| Botões azuis de ação | `Button` com `bg-blue-600` (seguindo o estilo da extensão) |
+| Badges JSON/CSV/TXT | `Button` variant `outline` com cor verde |
+| Seção FILTROS colapsável | `Collapsible` do Radix UI |
+| Counter "0 contas na fila" | número grande + label abaixo |
+| Botão "Limpar Fila" vermelho | `Button variant="destructive"` |
 
-### Detalhes técnicos
+---
 
-**Botão Sync Queue:**
+## Sidebar
+
+Adicionar entre "Log de Ações" e "Extensão":
 ```typescript
-// Em useDashboardV2.ts
-const syncQueue = useCallback(async () => {
-  if (!activeAccountId) return;
-  const { error } = await supabase.rpc("send_bot_command", {
-    p_ig_account_id: activeAccountId,
-    p_command: "sync_queue",
-    p_params: {},
-  });
-  if (error) throw error;
-}, [activeAccountId]);
-```
-
-**Barra de progresso no KpiCard:**
-```typescript
-// Novo prop opcional em KpiCard
-interface Props {
-  // ... existentes
-  progress?: { current: number; total: number };
-}
-// Renderiza <div> com width = (current/total)*100% abaixo do valor
-```
-
-**Realtime para queue_processed:**
-```typescript
-// Em useDashboardV2.ts — adicionar ao channel existente
-.on("postgres_changes", { event: "UPDATE", schema: "public", table: "ig_accounts",
-  filter: `id=eq.${activeAccountId}` }, (payload) => {
-  const row = payload.new as DashboardAccount;
-  setAccounts(prev => prev.map(a => a.id === row.id ? { ...a, ...row } : a));
-})
-```
-
-**Auto-sync após injeção em Campanhas:**
-```typescript
-// No handleInject() em Campaigns.tsx — após add_targets_batch ter sucesso:
-await supabase.rpc("send_bot_command", {
-  p_ig_account_id: selectedId,
-  p_command: "sync_queue",
-  p_params: {},
-});
-toast.success(`${added} targets adicionados — Fila sincronizada com a extensão!`);
-```
-
-**Toast de bot voltou online:**
-```typescript
-// Em useBotOfflineAlert.ts
-const wasOffline = !prevOnline.current[row.id];
-const isNowOnline = row.bot_online === true;
-if (wasOffline && isNowOnline) {
-  toast.success(`@${row.ig_username} — Bot voltou online ✓`, { duration: 5000 });
-}
+{ to: "/queue", icon: ListOrdered, label: "Fila de Targets" }
 ```
