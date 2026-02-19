@@ -7,6 +7,19 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import {
   Settings,
@@ -19,6 +32,12 @@ import {
   Clock,
   Filter,
   Zap,
+  Instagram,
+  Wifi,
+  WifiOff,
+  Trash2,
+  Plus,
+  CircuitBoard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -160,6 +179,229 @@ function ToggleRow({ label, description, checked, onCheckedChange }: ToggleRowPr
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} className="flex-shrink-0 mt-0.5" />
     </div>
+  );
+}
+
+// ─── Instagram Accounts Section ───────────────────────────────────────────────
+
+interface IgAccount {
+  id: string;
+  ig_username: string;
+  bot_online: boolean | null;
+  bot_status: string | null;
+  bridge_version: string | null;
+  followers_count: number | null;
+  last_heartbeat: string | null;
+  device_id: string | null;
+}
+
+function InstagramAccountsSection({ userId }: { userId: string }) {
+  const [accounts, setAccounts] = useState<IgAccount[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newUsername, setNewUsername] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
+
+  const fetchAccounts = useCallback(async () => {
+    const { data } = await supabase
+      .from("ig_accounts")
+      .select("id, ig_username, bot_online, bot_status, bridge_version, followers_count, last_heartbeat, device_id")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .order("created_at", { ascending: false });
+    setAccounts((data as IgAccount[]) ?? []);
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+
+  const handleAdd = async () => {
+    const trimmed = newUsername.trim().replace(/^@/, "");
+    if (!trimmed) return;
+    if (!/^[a-zA-Z0-9._]{1,30}$/.test(trimmed)) {
+      toast.error("Username inválido");
+      return;
+    }
+    setAdding(true);
+    try {
+      const { error } = await supabase.from("ig_accounts").insert({
+        ig_username: trimmed,
+        user_id: userId,
+        is_active: true,
+        bot_online: false,
+        bot_status: "offline",
+      });
+      if (error) throw error;
+      toast.success(`@${trimmed} adicionada!`);
+      setNewUsername("");
+      fetchAccounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao adicionar");
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleDisconnect = async (id: string, username: string) => {
+    setDisconnecting(id);
+    try {
+      const { error } = await supabase
+        .from("ig_accounts")
+        .update({ is_active: false })
+        .eq("id", id);
+      if (error) throw error;
+      toast.success(`@${username} desconectada`);
+      setAccounts((prev) => prev.filter((a) => a.id !== id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao desconectar");
+    } finally {
+      setDisconnecting(null);
+    }
+  };
+
+  const isOnline = (account: IgAccount) => {
+    if (!account.bot_online || !account.last_heartbeat) return false;
+    const diff = Date.now() - new Date(account.last_heartbeat).getTime();
+    return diff < 3 * 60 * 1000; // 3 min threshold
+  };
+
+  return (
+    <SectionCard
+      title="Contas Instagram Conectadas"
+      icon={<Instagram className="h-4 w-4" style={{ color: "hsl(320 65% 60%)" }} />}
+    >
+      {/* Add new account */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">@</span>
+          <Input
+            className="pl-7"
+            placeholder="instagram_username"
+            value={newUsername}
+            onChange={(e) => setNewUsername(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+            disabled={adding}
+          />
+        </div>
+        <Button
+          size="sm"
+          onClick={handleAdd}
+          disabled={adding || !newUsername.trim()}
+          className="gap-1.5 shrink-0"
+          style={{ backgroundColor: "hsl(320 65% 60%)", color: "white" }}
+        >
+          {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          Adicionar
+        </Button>
+      </div>
+
+      {/* Accounts list */}
+      {loading ? (
+        <div className="space-y-2">
+          {[1, 2].map((i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
+        </div>
+      ) : accounts.length === 0 ? (
+        <div className="text-center py-6 text-muted-foreground text-sm">
+          <Instagram className="h-8 w-8 mx-auto mb-2 opacity-30" />
+          Nenhuma conta conectada ainda
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {accounts.map((account) => {
+            const online = isOnline(account);
+            return (
+              <div
+                key={account.id}
+                className="flex items-center gap-3 rounded-xl px-4 py-3"
+                style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(220 18% 18%)" }}
+              >
+                {/* Status indicator */}
+                <div className="relative flex-shrink-0">
+                  <div
+                    className="w-9 h-9 rounded-full flex items-center justify-center"
+                    style={{ backgroundColor: "hsl(220 18% 15%)" }}
+                  >
+                    <Instagram className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <span
+                    className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-background ${
+                      online ? "bg-green-500" : "bg-muted-foreground/40"
+                    }`}
+                  />
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold">@{account.ig_username}</span>
+                    <Badge
+                      variant="outline"
+                      className={`text-xs px-1.5 py-0 gap-1 ${
+                        online
+                          ? "border-green-500/40 text-green-400"
+                          : "border-muted-foreground/30 text-muted-foreground"
+                      }`}
+                    >
+                      {online ? <Wifi className="h-2.5 w-2.5" /> : <WifiOff className="h-2.5 w-2.5" />}
+                      {online ? "Online" : account.bot_status ?? "Offline"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                    {account.bridge_version && (
+                      <span className="flex items-center gap-1">
+                        <CircuitBoard className="h-3 w-3" />
+                        v{account.bridge_version}
+                      </span>
+                    )}
+                    {account.followers_count != null && (
+                      <span>{account.followers_count.toLocaleString()} seguidores</span>
+                    )}
+                    {account.device_id && (
+                      <span className="truncate max-w-[120px]" title={account.device_id}>
+                        ID: {account.device_id.slice(0, 8)}…
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Disconnect button */}
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive flex-shrink-0"
+                      disabled={disconnecting === account.id}
+                    >
+                      {disconnecting === account.id
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Trash2 className="h-4 w-4" />}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Desconectar conta?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        A conta <strong>@{account.ig_username}</strong> será desconectada do bot. O histórico de ações será mantido.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => handleDisconnect(account.id, account.ig_username)}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        Desconectar
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 
@@ -420,6 +662,9 @@ export default function BotSettings() {
               </p>
             </div>
           </SectionCard>
+
+          {/* ── Instagram Accounts ── */}
+          {user && <InstagramAccountsSection userId={user.id} />}
 
           {/* Row 3: Filters + Notifications */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
