@@ -1,11 +1,20 @@
 import { ReactNode } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
+import { useAuth } from "@/hooks/useAuth";
+import { useBotOfflineAlert } from "@/hooks/useBotOfflineAlert";
+
+function BotAlertListener() {
+  const { user } = useAuth();
+  useBotOfflineAlert(user);
+  return null;
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <SidebarProvider defaultOpen>
       <div className="min-h-screen flex w-full bg-background text-foreground">
+        <BotAlertListener />
         <AppSidebar />
 
         {/* Main content */}
