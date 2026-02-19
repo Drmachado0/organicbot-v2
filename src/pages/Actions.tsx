@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppShell } from "@/components/layout/AppShell";
@@ -16,6 +16,7 @@ interface ActionRow {
   action_type: string;
   target_username: string | null;
   status: string;
+  isNew?: boolean;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -31,6 +32,8 @@ const ACTION_COLOR: Record<string, string> = {
   comment:  "hsl(252 62% 60%)",
 };
 
+const MAX_ACTIONS = 200;
+
 export default function Actions() {
   const { user } = useAuth();
   const [actions, setActions] = useState<ActionRow[]>([]);
@@ -40,6 +43,7 @@ export default function Actions() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
+  const newBadgeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const load = useCallback(async (p = 0) => {
     if (!user) return;
@@ -62,6 +66,48 @@ export default function Actions() {
 
   useEffect(() => { setPage(0); load(0); }, [load]);
 
+  // Realtime subscription
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`actions-realtime-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "action_log", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const newRow = payload.new as ActionRow;
+
+          // Only show if it matches current filters
+          const matchesType = filterType === "all" || newRow.action_type === filterType;
+          const matchesStatus = filterStatus === "all" || newRow.status === filterStatus;
+          if (!matchesType || !matchesStatus) return;
+
+          setActions((prev) => {
+            const withNew = [{ ...newRow, isNew: true }, ...prev].slice(0, MAX_ACTIONS);
+            return withNew;
+          });
+
+          // Remove "new" badge after 3s
+          const timer = setTimeout(() => {
+            setActions((prev) =>
+              prev.map((a) => (a.id === newRow.id ? { ...a, isNew: false } : a))
+            );
+            newBadgeTimers.current.delete(newRow.id);
+          }, 3000);
+          newBadgeTimers.current.set(newRow.id, timer);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      // Clear all timers on unmount
+      newBadgeTimers.current.forEach((t) => clearTimeout(t));
+      newBadgeTimers.current.clear();
+    };
+  }, [user, filterType, filterStatus]);
+
   const loadMore = () => { const next = page + 1; setPage(next); load(next); };
 
   const filtered = actions.filter((a) =>
@@ -74,6 +120,14 @@ export default function Actions() {
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <List className="h-5 w-5 text-primary flex-shrink-0" />
           <h1 className="text-xl font-bold tracking-tight">Log de Ações</h1>
+          {/* Live indicator */}
+          <div className="flex items-center gap-1.5 ml-1">
+            <span
+              className="w-1.5 h-1.5 rounded-full animate-pulse"
+              style={{ backgroundColor: "hsl(152 72% 48%)" }}
+            />
+            <span className="text-xs text-muted-foreground">live</span>
+          </div>
         </div>
         <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground" onClick={() => load(0)} disabled={isLoading}>
           <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
@@ -125,14 +179,18 @@ export default function Actions() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border/30">
-                    {["Data / Hora", "Tipo", "Target", "Status"].map((h) => (
+                    {["Data / Hora", "Tipo", "Target", "Status", ""].map((h) => (
                       <th key={h} className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((a) => (
-                    <tr key={a.id} className="border-b border-border/10 hover:bg-muted/20 transition-colors">
+                    <tr
+                      key={a.id}
+                      className={`border-b border-border/10 hover:bg-muted/20 transition-colors ${a.isNew ? "animate-fade-in" : ""}`}
+                      style={a.isNew ? { backgroundColor: "hsl(152 72% 48% / 0.05)" } : {}}
+                    >
                       <td className="py-2.5 px-4 text-xs text-muted-foreground tabular-nums whitespace-nowrap">
                         {a.executed_at ? new Date(a.executed_at).toLocaleString("pt-BR") : "—"}
                       </td>
@@ -164,6 +222,16 @@ export default function Actions() {
                             {a.status}
                           </span>
                         </div>
+                      </td>
+                      <td className="py-2.5 px-4 text-right">
+                        {a.isNew && (
+                          <span
+                            className="text-xs font-semibold px-1.5 py-0.5 rounded-full animate-pulse"
+                            style={{ backgroundColor: "hsl(152 72% 48% / 0.15)", color: "hsl(152 72% 48%)" }}
+                          >
+                            novo
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

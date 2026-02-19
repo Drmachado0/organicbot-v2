@@ -23,6 +23,7 @@ import {
   List,
   CheckCircle,
   AlertCircle,
+  Terminal,
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -41,6 +42,7 @@ export default function Dashboard() {
     whitelistCount,
     whitelistPreview,
     automationPaused,
+    recentCommands,
     isLoading,
     error,
     toggleBot,
@@ -227,6 +229,64 @@ export default function Dashboard() {
             isLoading={isLoading}
           />
         </section>
+
+        {/* ── Row 6: Recent Bot Commands ── */}
+        {(recentCommands.length > 0 || isLoading) && (
+          <div className="glass-card rounded-2xl p-5 animate-fade-in">
+            <div className="flex items-center gap-2 mb-4">
+              <Terminal className="h-4 w-4 text-muted-foreground" />
+              <p className="text-sm font-semibold">Comandos Recentes do Bot</p>
+            </div>
+            {isLoading ? (
+              <div className="space-y-2">
+                {[1, 2, 3].map((i) => <div key={i} className="h-8 rounded-lg bg-muted/30 animate-pulse" />)}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {recentCommands.map((cmd) => (
+                  <div
+                    key={cmd.id}
+                    className="flex items-center justify-between px-3 py-2 rounded-lg text-xs"
+                    style={{ backgroundColor: "hsl(220 18% 10%)" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                        style={{
+                          backgroundColor:
+                            cmd.status === "executed" ? "hsl(152 72% 48%)" :
+                            cmd.status === "pending" ? "hsl(42 96% 56%)" :
+                            "hsl(0 72% 55%)",
+                        }}
+                      />
+                      <span className="font-mono font-semibold capitalize">{cmd.command}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span
+                        className="text-xs capitalize px-1.5 py-0.5 rounded-full"
+                        style={{
+                          backgroundColor:
+                            cmd.status === "executed" ? "hsl(152 72% 48% / 0.12)" :
+                            cmd.status === "pending" ? "hsl(42 96% 56% / 0.12)" :
+                            "hsl(0 72% 55% / 0.12)",
+                          color:
+                            cmd.status === "executed" ? "hsl(152 72% 48%)" :
+                            cmd.status === "pending" ? "hsl(42 96% 56%)" :
+                            "hsl(0 72% 55%)",
+                        }}
+                      >
+                        {cmd.status}
+                      </span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {cmd.created_at ? new Date(cmd.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </AppShell>
   );
