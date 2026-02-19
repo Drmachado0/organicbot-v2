@@ -1,5 +1,7 @@
 import { useNavigate, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import {
   LayoutDashboard,
   Target,
@@ -11,6 +13,7 @@ import {
   Zap,
   ChevronLeft,
   ChevronRight,
+  User,
 } from "lucide-react";
 import {
   Sidebar,
@@ -24,7 +27,6 @@ import {
 } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 
 const navItems = [
   { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
@@ -35,16 +37,44 @@ const navItems = [
   { to: "/settings",  icon: Settings,         label: "Configurações" },
 ];
 
+interface Profile {
+  full_name: string | null;
+  email: string;
+  avatar_url: string | null;
+}
+
 export function AppSidebar() {
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from("profiles")
+      .select("full_name, email, avatar_url")
+      .eq("id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setProfile(data as Profile);
+      });
+  }, [user]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     navigate("/login");
   };
+
+  const displayName = profile?.full_name || profile?.email?.split("@")[0] || "Usuário";
+  const initials = displayName
+    .split(" ")
+    .slice(0, 2)
+    .map((w: string) => w[0])
+    .join("")
+    .toUpperCase();
 
   return (
     <Sidebar
@@ -113,8 +143,54 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* ── Bottom: collapse toggle + logout ── */}
+        {/* ── Bottom: user + collapse + logout ── */}
         <div className="border-t border-sidebar-border px-2 py-3 flex flex-col gap-1 flex-shrink-0">
+
+          {/* User profile row */}
+          <div
+            className={cn(
+              "flex items-center gap-2.5 px-3 py-2 rounded-lg mb-1",
+              collapsed && "justify-center px-0"
+            )}
+            style={{ backgroundColor: "hsl(220 18% 10%)" }}
+          >
+            {/* Avatar */}
+            <div className="flex-shrink-0">
+              {profile?.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt={displayName}
+                  className="w-7 h-7 rounded-full object-cover"
+                />
+              ) : (
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
+                  style={{
+                    backgroundColor: "hsl(152 72% 48% / 0.2)",
+                    color: "hsl(152 72% 48%)",
+                    border: "1px solid hsl(152 72% 48% / 0.3)",
+                  }}
+                >
+                  {initials || <User className="h-3.5 w-3.5" />}
+                </div>
+              )}
+            </div>
+
+            {/* Name + email */}
+            {!collapsed && (
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-sidebar-foreground truncate leading-tight">
+                  {displayName}
+                </p>
+                {profile?.email && (
+                  <p className="text-[10px] text-sidebar-foreground/40 truncate leading-tight">
+                    {profile.email}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Collapse toggle */}
           <button
             onClick={toggleSidebar}
