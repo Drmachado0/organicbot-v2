@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Eye, EyeOff, Zap, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Zap, Loader2, ArrowLeft } from "lucide-react";
 
-type Mode = "login" | "signup";
+type Mode = "login" | "signup" | "forgot";
 
 export default function Auth() {
   const { user, loading } = useAuth();
@@ -27,6 +27,19 @@ export default function Auth() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (mode === "forgot") {
+      if (!form.email) { toast.error("Informe seu email"); return; }
+      setIsSubmitting(true);
+      const { error } = await supabase.auth.resetPasswordForEmail(form.email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      setIsSubmitting(false);
+      if (error) toast.error(error.message);
+      else toast.success("Email de recuperação enviado! Verifique sua caixa de entrada.");
+      return;
+    }
+
     if (!form.email || !form.password) {
       toast.error("Preencha email e senha");
       return;
@@ -94,7 +107,7 @@ export default function Auth() {
           </div>
           <h1 className="text-2xl font-bold tracking-tight">Organic Pro</h1>
           <p className="text-sm text-muted-foreground">
-            {mode === "login" ? "Entre na sua conta" : "Crie sua conta"}
+            {mode === "login" ? "Entre na sua conta" : mode === "signup" ? "Crie sua conta" : "Recuperar senha"}
           </p>
         </div>
 
@@ -136,31 +149,44 @@ export default function Auth() {
               />
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="password" className="text-sm text-muted-foreground">
-                Senha
-              </Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  name="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder={mode === "signup" ? "Mínimo 6 caracteres" : "••••••••"}
-                  value={form.password}
-                  onChange={handleChange}
-                  required
-                  className="bg-secondary/50 border-border/60 focus:border-primary h-10 pr-10"
-                  autoComplete={mode === "login" ? "current-password" : "new-password"}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+            {mode !== "forgot" && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password" className="text-sm text-muted-foreground">
+                    Senha
+                  </Label>
+                  {mode === "login" && (
+                    <button
+                      type="button"
+                      onClick={() => { setMode("forgot"); setForm((f) => ({ ...f, password: "" })); }}
+                      className="text-xs text-muted-foreground hover:text-primary transition-colors"
+                    >
+                      Esqueci minha senha
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder={mode === "signup" ? "Mínimo 6 caracteres" : "••••••••"}
+                    value={form.password}
+                    onChange={handleChange}
+                    required
+                    className="bg-secondary/50 border-border/60 focus:border-primary h-10 pr-10"
+                    autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             <Button
               type="submit"
@@ -172,8 +198,10 @@ export default function Auth() {
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : mode === "login" ? (
                 "Entrar"
-              ) : (
+              ) : mode === "signup" ? (
                 "Criar conta"
+              ) : (
+                "Enviar link de recuperação"
               )}
             </Button>
           </form>
@@ -184,7 +212,7 @@ export default function Auth() {
             </div>
             <div className="relative flex justify-center text-xs">
               <span className="bg-card px-2 text-muted-foreground">
-                {mode === "login" ? "Não tem conta?" : "Já tem conta?"}
+                {mode === "forgot" ? "Lembrou sua senha?" : mode === "login" ? "Não tem conta?" : "Já tem conta?"}
               </span>
             </div>
           </div>
@@ -192,13 +220,19 @@ export default function Auth() {
           <Button
             type="button"
             variant="ghost"
-            className="w-full h-9 text-sm text-muted-foreground hover:text-foreground"
+            className="w-full h-9 text-sm text-muted-foreground hover:text-foreground gap-1.5"
             onClick={() => {
-              setMode((m) => (m === "login" ? "signup" : "login"));
+              setMode((m) => (m === "signup" ? "login" : m === "forgot" ? "login" : "signup"));
               setForm({ email: "", password: "", fullName: "" });
             }}
           >
-            {mode === "login" ? "Criar uma conta" : "Fazer login"}
+            {mode === "forgot" ? (
+              <><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao login</>
+            ) : mode === "login" ? (
+              "Criar uma conta"
+            ) : (
+              "Fazer login"
+            )}
           </Button>
         </div>
       </div>
