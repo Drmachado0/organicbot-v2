@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   Plus,
@@ -23,6 +24,9 @@ import {
   ToggleLeft,
   ToggleRight,
   Loader2,
+  ListOrdered,
+  Eraser,
+  RefreshCw,
 } from "lucide-react";
 
 interface Campaign {
@@ -108,6 +112,150 @@ const EMPTY_FORM = {
   competitors: [] as string[],
   is_active: false,
 };
+
+// ─── Target Queue Panel ─────────────────────────────────────────────────────
+
+interface QueueStats {
+  pending: number;
+  processing: number;
+  done: number;
+}
+
+function TargetQueuePanel({ userId }: { userId: string }) {
+  const [accounts, setAccounts] = useState<{ id: string; ig_username: string }[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [stats, setStats] = useState<QueueStats | null>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [clearing, setClearing] = useState(false);
+
+  useEffect(() => {
+    supabase
+      .from("ig_accounts")
+      .select("id, ig_username")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .order("created_at")
+      .then(({ data }) => {
+        const accs = (data ?? []) as { id: string; ig_username: string }[];
+        setAccounts(accs);
+        if (accs.length > 0) setSelectedId(accs[0].id);
+      });
+  }, [userId]);
+
+  const loadStats = useCallback(async (id: string) => {
+    if (!id) return;
+    setLoadingStats(true);
+    const [pendingRes, processingRes, doneRes] = await Promise.all([
+      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", id).in("status", ["pending", "injected"]),
+      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", id).eq("status", "processing"),
+      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", id).eq("status", "done"),
+    ]);
+    setStats({
+      pending: pendingRes.count ?? 0,
+      processing: processingRes.count ?? 0,
+      done: doneRes.count ?? 0,
+    });
+    setLoadingStats(false);
+  }, []);
+
+  useEffect(() => {
+    if (selectedId) loadStats(selectedId);
+  }, [selectedId, loadStats]);
+
+  const handleClear = async () => {
+    if (!selectedId) return;
+    setClearing(true);
+    try {
+      const { data, error } = await supabase.rpc("clear_target_queue", { p_ig_account_id: selectedId, p_status: "all" });
+      if (error) throw error;
+      toast.success(`${data} targets removidos da fila`);
+      loadStats(selectedId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao limpar fila");
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  return (
+    <div
+      className="glass-card rounded-2xl p-5 space-y-4 animate-fade-in"
+      style={{ border: "1px solid hsl(252 62% 60% / 0.2)" }}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ListOrdered className="h-4 w-4" style={{ color: "hsl(252 62% 60%)" }} />
+          <p className="text-sm font-semibold">Fila de Targets</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {accounts.length > 1 && (
+            <Select value={selectedId} onValueChange={setSelectedId}>
+              <SelectTrigger className="h-8 text-xs w-36 glass-card border-border/60">
+                <SelectValue placeholder="Conta" />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {accounts.length === 1 && (
+            <span className="text-xs text-muted-foreground">@{accounts[0]?.ig_username}</span>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={() => loadStats(selectedId)}
+            disabled={loadingStats}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loadingStats ? "animate-spin" : ""}`} />
+          </Button>
+        </div>
+      </div>
+
+      {loadingStats || !stats ? (
+        <div className="grid grid-cols-3 gap-3">
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: "Pendentes", value: stats.pending, color: "hsl(42 96% 56%)" },
+            { label: "Processando", value: stats.processing, color: "hsl(252 62% 60%)" },
+            { label: "Concluídos", value: stats.done, color: "hsl(152 72% 48%)" },
+          ].map(({ label, value, color }) => (
+            <div
+              key={label}
+              className="rounded-xl p-3 text-center"
+              style={{ backgroundColor: "hsl(220 18% 10%)", border: `1px solid ${color}/20` }}
+            >
+              <p className="text-xl font-bold tabular-nums" style={{ color }}>{value.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between pt-1 border-t border-border/20">
+        <p className="text-xs text-muted-foreground">
+          {stats ? `Total: ${(stats.pending + stats.processing + stats.done).toLocaleString()} targets` : ""}
+        </p>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1.5 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+          onClick={handleClear}
+          disabled={clearing || !stats || stats.pending + stats.processing === 0}
+        >
+          {clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eraser className="h-3.5 w-3.5" />}
+          Limpar fila
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export default function Campaigns() {
   const { user } = useAuth();

@@ -222,6 +222,8 @@ export default function Dashboard() {
             todayActions={todayActions}
             pendingQueueCount={pendingQueueCount}
             botOnline={account?.bot_online ?? false}
+            igAccountId={activeAccountId}
+            lastHeartbeat={account?.last_heartbeat ?? null}
             isLoading={isLoading}
           />
         </section>
