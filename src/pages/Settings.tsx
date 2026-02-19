@@ -55,6 +55,10 @@ interface BotSettings {
   // Delays
   delay_min: number;
   delay_max: number;
+  // Extension-specific (written directly to ig_accounts)
+  bot_mode: string;
+  likes_per_follow: number;
+  max_actions_per_session: number;
   // Schedule (24 slots, true = active)
   schedule_hours: boolean[];
   // Filters
@@ -77,6 +81,9 @@ const DEFAULTS: BotSettings = {
   like_daily_limit: 300,
   delay_min: 25,
   delay_max: 45,
+  bot_mode: "seguir_curtir",
+  likes_per_follow: 2,
+  max_actions_per_session: 50,
   schedule_hours: Array(24).fill(true),
   dont_unfollow_followers: true,
   dont_unfollow_fresh: true,
@@ -89,6 +96,38 @@ const DEFAULTS: BotSettings = {
   randomize_percent: 50,
   email_notifications: true,
 };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Convert 24-bool array → bot_schedule object that extension reads */
+function scheduleHoursToBotSchedule(hours: boolean[]): object {
+  const activeIndices = hours.map((h, i) => h ? i : -1).filter(i => i >= 0);
+  const firstActive = activeIndices[0] ?? -1;
+  const lastActive = activeIndices[activeIndices.length - 1] ?? -1;
+  const enabled = firstActive >= 0;
+  const start = enabled ? `${String(firstActive).padStart(2, "0")}:00` : "09:00";
+  const stop = enabled ? `${String(Math.min(lastActive + 1, 24)).padStart(2, "0")}:00` : "18:00";
+  const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const days = dayKeys.reduce((acc, day) => {
+    acc[day] = { active: enabled, start, stop, follows: 60, likes: 120, mode: "seguir_curtir" };
+    return acc;
+  }, {} as Record<string, unknown>);
+  return { enabled, timezone: "America/Sao_Paulo", days };
+}
+
+const BOT_MODES = [
+  { value: "seguir_curtir", label: "Follow + Like", desc: "Segue e curte publicações do alvo" },
+  { value: "seguir", label: "Apenas Follow", desc: "Somente segue, sem curtir" },
+  { value: "curtir", label: "Apenas Like", desc: "Somente curte publicações" },
+  { value: "deixar_seguir", label: "Unfollow", desc: "Desfaz seguimentos antigos" },
+  { value: "ver_story", label: "Ver Stories", desc: "Visualiza stories dos alvos" },
+];
+
+const SAFETY_PRESETS = [
+  { id: "nova", label: "🟢 Conta Nova", delayMin: 45, delayMax: 90, follows: 40, unfollows: 30, likes: 80, session: 20, desc: "< 3 meses · risco mínimo" },
+  { id: "media", label: "🟡 Conta Média", delayMin: 25, delayMax: 45, follows: 100, unfollows: 80, likes: 200, session: 50, desc: "3–12 meses · crescimento estável" },
+  { id: "madura", label: "🔴 Conta Madura", delayMin: 15, delayMax: 25, follows: 200, unfollows: 150, likes: 400, session: 100, desc: "> 12 meses · máximo crescimento" },
+];
 
 function parseSettings(raw: Record<string, unknown> | null): BotSettings {
   if (!raw) return { ...DEFAULTS };
@@ -105,6 +144,9 @@ function parseSettings(raw: Record<string, unknown> | null): BotSettings {
     like_daily_limit: Number(raw.like_daily_limit ?? DEFAULTS.like_daily_limit),
     delay_min: Number(raw.delay_min ?? DEFAULTS.delay_min),
     delay_max: Number(raw.delay_max ?? DEFAULTS.delay_max),
+    bot_mode: String(raw.bot_mode ?? DEFAULTS.bot_mode),
+    likes_per_follow: Number(raw.likes_per_follow ?? DEFAULTS.likes_per_follow),
+    max_actions_per_session: Number(raw.max_actions_per_session ?? DEFAULTS.max_actions_per_session),
     schedule_hours,
     dont_unfollow_followers: Boolean(raw.dont_unfollow_followers ?? DEFAULTS.dont_unfollow_followers),
     dont_unfollow_fresh: Boolean(raw.dont_unfollow_fresh ?? DEFAULTS.dont_unfollow_fresh),
@@ -694,11 +736,11 @@ function ExtensionSyncSection({ userId }: { userId: string }) {
     try {
       const { error } = await supabase.rpc("send_bot_command", {
         p_ig_account_id: selectedId,
-        p_command: "reload_settings",
+        p_command: "sync_settings",
         p_params: {},
       });
       if (error) throw error;
-      toast.success("Comando de sync enviado! A extensão lerá em até 45s.");
+      toast.success("Comando sync_settings enviado! A extensão lerá em até 45s.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao enviar comando");
     } finally {
@@ -716,16 +758,14 @@ function ExtensionSyncSection({ userId }: { userId: string }) {
   };
 
   const syncedFields = [
-    "Horários de operação (schedule_hours)",
-    "Delays mínimo e máximo",
-    "Limite diário de follow",
-    "Limite diário de unfollow",
-    "Limite diário de like",
-    "Proteger seguidores de unfollow",
-    "Aguardar dias antes do unfollow",
-    "Só desfazer follows do bot",
-    "Randomizar delays",
-    "Percentual de variação",
+    { label: "delay_min / delay_max", table: "ig_accounts" },
+    { label: "bot_mode (modo de automação)", table: "ig_accounts" },
+    { label: "likes_per_follow", table: "ig_accounts" },
+    { label: "max_actions_per_session", table: "ig_accounts" },
+    { label: "bot_schedule (horários)", table: "ig_accounts" },
+    { label: "Filtros de unfollow", table: "user_settings" },
+    { label: "Randomização de delays", table: "user_settings" },
+    { label: "Limites diários follow/unfollow/like", table: "user_settings" },
   ];
 
   return (
@@ -768,14 +808,19 @@ function ExtensionSyncSection({ userId }: { userId: string }) {
         style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(42 96% 56% / 0.2)" }}
       >
         <p className="text-xs text-muted-foreground">
-          As configurações abaixo são sincronizadas automaticamente a cada <strong className="text-foreground">2 minutos</strong>.
-          Use o botão para forçar o sync imediato.
+          Ao salvar, as configurações são escritas <strong className="text-foreground">diretamente em ig_accounts</strong> (fonte de verdade da extensão) e em user_settings. O botão abaixo força a extensão a reler imediatamente via comando <code className="text-xs bg-muted/40 px-1 rounded">sync_settings</code>.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {syncedFields.map((f) => (
-            <div key={f} className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div key={f.label} className="flex items-center gap-2 text-xs text-muted-foreground">
               <CheckCircle2 className="h-3 w-3 flex-shrink-0" style={{ color: "hsl(152 72% 48%)" }} />
-              <span>{f}</span>
+              <span className="flex-1">{f.label}</span>
+              <span
+                className="text-xs px-1.5 py-0.5 rounded font-mono"
+                style={{ backgroundColor: f.table === "ig_accounts" ? "hsl(152 72% 48% / 0.12)" : "hsl(215 72% 60% / 0.12)", color: f.table === "ig_accounts" ? "hsl(152 72% 48%)" : "hsl(215 72% 60%)" }}
+              >
+                {f.table}
+              </span>
             </div>
           ))}
         </div>
@@ -787,7 +832,7 @@ function ExtensionSyncSection({ userId }: { userId: string }) {
           style={{ backgroundColor: "hsl(42 96% 56%)", color: "hsl(222 25% 6%)" }}
         >
           {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-          Forçar sync agora
+          Forçar sync agora (sync_settings)
         </Button>
         {accounts.length === 0 && (
           <p className="text-xs text-muted-foreground/60 text-center">
@@ -798,7 +843,6 @@ function ExtensionSyncSection({ userId }: { userId: string }) {
     </SectionCard>
   );
 }
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function BotSettings() {
@@ -813,17 +857,26 @@ export default function BotSettings() {
     setIsDirty(true);
   }, []);
 
-  // Load
+  // Load settings — also fetch ig_accounts fields (delay_min/max, bot_mode, etc.)
   useEffect(() => {
     if (!user) return;
     (async () => {
       setIsLoading(true);
-      const { data } = await supabase
-        .from("user_settings")
-        .select("settings_json")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      setSettings(parseSettings((data?.settings_json as Record<string, unknown>) ?? null));
+      const [settingsRes, accountRes] = await Promise.all([
+        supabase.from("user_settings").select("settings_json").eq("user_id", user.id).maybeSingle(),
+        supabase.from("ig_accounts").select("delay_min, delay_max, bot_mode, likes_per_follow, max_actions_per_session").eq("user_id", user.id).eq("is_active", true).order("created_at").limit(1).maybeSingle(),
+      ]);
+      const base = parseSettings((settingsRes.data?.settings_json as Record<string, unknown>) ?? null);
+      // Merge ig_accounts fields that override user_settings (source of truth for extension)
+      if (accountRes.data) {
+        const acc = accountRes.data;
+        if (acc.delay_min != null) base.delay_min = acc.delay_min;
+        if (acc.delay_max != null) base.delay_max = acc.delay_max;
+        if (acc.bot_mode) base.bot_mode = acc.bot_mode;
+        if (acc.likes_per_follow != null) base.likes_per_follow = acc.likes_per_follow;
+        if (acc.max_actions_per_session != null) base.max_actions_per_session = acc.max_actions_per_session;
+      }
+      setSettings(base);
       setIsDirty(false);
       setIsLoading(false);
     })();
@@ -833,17 +886,29 @@ export default function BotSettings() {
     if (!user) return;
     setIsSaving(true);
     try {
-      const { error } = await supabase.from("user_settings").upsert(
-        [{
-          user_id: user.id,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          settings_json: settings as any,
-          updated_at: new Date().toISOString(),
-        }],
+      const botSchedule = scheduleHoursToBotSchedule(settings.schedule_hours);
+
+      // 1. Save to user_settings (all settings)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: settingsError } = await supabase.from("user_settings").upsert(
+        [{ user_id: user.id, settings_json: settings as unknown as import("@/integrations/supabase/types").Json, updated_at: new Date().toISOString() }],
         { onConflict: "user_id" }
       );
-      if (error) throw error;
-      toast.success("Configurações salvas!");
+      if (settingsError) throw settingsError;
+
+      // 2. Sync critical fields to ig_accounts (what the extension actually reads)
+      const { error: accountError } = await supabase.from("ig_accounts").update({
+        delay_min: settings.delay_min,
+        delay_max: settings.delay_max,
+        bot_mode: settings.bot_mode,
+        likes_per_follow: settings.likes_per_follow,
+        max_actions_per_session: settings.max_actions_per_session,
+        bot_schedule: botSchedule as unknown as import("@/integrations/supabase/types").Json,
+        updated_at: new Date().toISOString(),
+      }).eq("user_id", user.id).eq("is_active", true);
+      if (accountError) throw accountError;
+
+      toast.success("Configurações salvas e sincronizadas com a extensão!");
       setIsDirty(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao salvar");
@@ -907,6 +972,85 @@ export default function BotSettings() {
         </div>
       ) : (
         <div className="space-y-5">
+          {/* ── Safety Presets ── */}
+          <SectionCard
+            title="Presets de Segurança"
+            icon={<Zap className="h-4 w-4" style={{ color: "hsl(152 72% 48%)" }} />}
+          >
+            <p className="text-xs text-muted-foreground -mt-1">Aplica automaticamente delays e limites recomendados. Envia comando imediato à extensão.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {SAFETY_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={async () => {
+                    setSettings((prev) => ({
+                      ...prev,
+                      delay_min: p.delayMin,
+                      delay_max: p.delayMax,
+                      follow_daily_limit: p.follows,
+                      unfollow_daily_limit: p.unfollows,
+                      like_daily_limit: p.likes,
+                      max_actions_per_session: p.session,
+                    }));
+                    setIsDirty(true);
+                    // Send immediate command to extension
+                    const { data: accs } = await supabase.from("ig_accounts").select("id").eq("user_id", user?.id ?? "").eq("is_active", true);
+                    if (accs && accs.length > 0) {
+                      for (const acc of accs) {
+                        await supabase.rpc("send_bot_command", {
+                          p_ig_account_id: acc.id,
+                          p_command: "set_safety_preset",
+                          p_params: { preset: p.id, delay_min: p.delayMin, delay_max: p.delayMax },
+                        });
+                      }
+                      toast.success(`Preset "${p.id}" aplicado e enviado à extensão!`);
+                    } else {
+                      toast.info(`Preset "${p.id}" aplicado. Salve para sincronizar.`);
+                    }
+                  }}
+                  className="rounded-xl px-4 py-4 text-left space-y-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(220 18% 22%)" }}
+                >
+                  <p className="text-xs font-bold">{p.label}</p>
+                  <div className="text-xs text-muted-foreground space-y-0.5">
+                    <p>Follow: <span className="text-foreground font-medium">{p.follows}/dia</span></p>
+                    <p>Delay: <span className="text-foreground font-medium">{p.delayMin}–{p.delayMax}s</span></p>
+                    <p>Sessão: <span className="text-foreground font-medium">{p.session} ações</span></p>
+                  </div>
+                  <p className="text-xs text-muted-foreground/60">{p.desc}</p>
+                </button>
+              ))}
+            </div>
+          </SectionCard>
+
+          {/* ── Bot Mode ── */}
+          <SectionCard
+            title="Modo de Automação"
+            icon={<Zap className="h-4 w-4" style={{ color: "hsl(252 62% 60%)" }} />}
+          >
+            <p className="text-xs text-muted-foreground -mt-1">Define o que a extensão faz ao processar cada alvo. Escrito em <code className="bg-muted/40 px-1 rounded">ig_accounts.bot_mode</code>.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {BOT_MODES.map((m) => {
+                const active = settings.bot_mode === m.value;
+                return (
+                  <button
+                    key={m.value}
+                    onClick={() => { set("bot_mode", m.value); }}
+                    className="rounded-xl px-4 py-3 text-left transition-all"
+                    style={{
+                      backgroundColor: active ? "hsl(252 62% 60% / 0.15)" : "hsl(220 18% 10%)",
+                      border: `1px solid ${active ? "hsl(252 62% 60% / 0.5)" : "hsl(220 18% 22%)"}`,
+                    }}
+                  >
+                    <p className="text-sm font-semibold" style={{ color: active ? "hsl(252 62% 60%)" : undefined }}>{m.label}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{m.desc}</p>
+                    <p className="text-xs font-mono text-muted-foreground/50 mt-1">{m.value}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </SectionCard>
+
           {/* Row 1: Limits + Delays */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
@@ -939,6 +1083,31 @@ export default function BotSettings() {
                 color="hsl(320 65% 60%)"
                 onChange={(v) => set("like_daily_limit", v)}
               />
+              <div className="pt-1 border-t border-border/30 space-y-4">
+                <p className="text-xs text-muted-foreground font-medium">Configurações da extensão (ig_accounts)</p>
+                <LimitSlider
+                  label="Likes por Follow"
+                  icon={<Heart className="h-3.5 w-3.5" style={{ color: "hsl(320 65% 60%)" }} />}
+                  value={settings.likes_per_follow}
+                  min={0} max={5} step={1}
+                  color="hsl(320 65% 60%)"
+                  onChange={(v) => set("likes_per_follow", v)}
+                />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
+                      <Zap className="h-3.5 w-3.5 text-muted-foreground" /> Máx. ações/sessão
+                    </Label>
+                    <span className="text-sm font-bold tabular-nums" style={{ color: "hsl(215 72% 60%)" }}>{settings.max_actions_per_session}</span>
+                  </div>
+                  <Slider
+                    min={10} max={200} step={10}
+                    value={[settings.max_actions_per_session]}
+                    onValueChange={([v]) => set("max_actions_per_session", v)}
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground/60"><span>10</span><span>200</span></div>
+                </div>
+              </div>
             </SectionCard>
 
             {/* ── Delays ── */}
