@@ -9,27 +9,23 @@ import { RecentActionsTable } from "@/components/dashboard/RecentActionsTable";
 import { CampaignsCard } from "@/components/dashboard/CampaignsCard";
 import { HealthAlertsCard } from "@/components/dashboard/HealthAlertsCard";
 import { WhitelistCard } from "@/components/dashboard/WhitelistCard";
+import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import {
   Play,
   Pause,
   RefreshCw,
-  LayoutDashboard,
   Users,
   List,
   CheckCircle,
   AlertCircle,
-  LogOut,
 } from "lucide-react";
 
 export default function Dashboard() {
-  const navigate = useNavigate();
   const {
     accounts,
     activeAccountId,
@@ -54,11 +50,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (error) toast.error(error);
   }, [error]);
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/login");
-  };
 
   const botActive = account?.bot_online && !automationPaused;
 
@@ -87,32 +78,32 @@ export default function Dashboard() {
   // Empty state — no accounts
   if (!isLoading && accounts.length === 0) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-6">
-        <div className="glass-card rounded-2xl p-10 text-center max-w-md space-y-4 animate-fade-in">
-          <div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center" style={{ backgroundColor: "hsl(152 72% 48% / 0.15)" }}>
-            <Users className="h-7 w-7" style={{ color: "hsl(152 72% 48%)" }} />
+      <AppShell>
+        <div className="flex items-center justify-center py-20">
+          <div className="glass-card rounded-2xl p-10 text-center max-w-md space-y-4 animate-fade-in">
+            <div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center" style={{ backgroundColor: "hsl(152 72% 48% / 0.15)" }}>
+              <Users className="h-7 w-7" style={{ color: "hsl(152 72% 48%)" }} />
+            </div>
+            <h2 className="text-xl font-bold">Nenhuma conta conectada</h2>
+            <p className="text-sm text-muted-foreground">
+              Conecte uma conta do Instagram para começar a usar o dashboard de automação.
+            </p>
+            <Button className="mt-2" style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}>
+              Conectar conta
+            </Button>
           </div>
-          <h2 className="text-xl font-bold">Nenhuma conta conectada</h2>
-          <p className="text-sm text-muted-foreground">
-            Conecte uma conta do Instagram para começar a usar o dashboard de automação.
-          </p>
-          <Button className="mt-2" style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}>
-            Conectar conta
-          </Button>
         </div>
-      </div>
+      </AppShell>
     );
   }
 
+
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <AppShell>
+      <div className="space-y-6">
         {/* ── Header ── */}
         <header className="flex flex-wrap items-center gap-3 animate-fade-in">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <LayoutDashboard className="h-5 w-5 flex-shrink-0" style={{ color: "hsl(152 72% 48%)" }} />
-            <h1 className="text-xl font-bold tracking-tight truncate">Dashboard</h1>
-          </div>
+          <h1 className="text-xl font-bold tracking-tight flex-1 truncate">Dashboard</h1>
 
           {/* Account selector */}
           {isLoading ? (
@@ -170,17 +161,6 @@ export default function Dashboard() {
               <span className="relative z-10">{botActive ? "Bot Ativo — Pausar" : "Iniciar Bot"}</span>
             </Button>
           )}
-
-          {/* Logout */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors"
-            onClick={handleLogout}
-            title="Sair"
-          >
-            <LogOut className="h-4 w-4" />
-          </Button>
         </header>
 
         {/* ── Live Status Bar ── */}
@@ -246,6 +226,7 @@ export default function Dashboard() {
           />
         </section>
       </div>
-    </main>
+    </AppShell>
   );
 }
+
