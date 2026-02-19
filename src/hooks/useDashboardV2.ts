@@ -118,6 +118,9 @@ export function useDashboardV2(): DashboardData {
     setIsLoading(true);
     setError(null);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setIsLoading(false); return; }
+
       const today = new Date().toISOString().split("T")[0];
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0];
       const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString();
@@ -136,7 +139,8 @@ export function useDashboardV2(): DashboardData {
         settingsRes,
         commandsRes,
       ] = await Promise.all([
-        supabase.from("ig_accounts").select("id, ig_username, followers_count, following_count, posts_count, bot_online, bot_status, bot_mode, last_heartbeat, queue_total, queue_processed, profile_pic_url").order("created_at", { ascending: true }),
+        // Filter by user_id to avoid seeing other users' accounts
+        supabase.from("ig_accounts").select("id, ig_username, followers_count, following_count, posts_count, bot_online, bot_status, bot_mode, last_heartbeat, queue_total, queue_processed, profile_pic_url").eq("user_id", user.id).eq("is_active", true).order("created_at", { ascending: true }),
         accountId
           ? supabase.from("daily_action_cache").select("action_type, success_count").eq("ig_account_id", accountId).eq("day", today)
           : Promise.resolve({ data: [], error: null }),
@@ -155,10 +159,10 @@ export function useDashboardV2(): DashboardData {
         accountId
           ? supabase.from("action_log").select("id, executed_at, action_type, target_username, status, details").eq("ig_account_id", accountId).order("executed_at", { ascending: false }).limit(20)
           : Promise.resolve({ data: [], error: null }),
-        supabase.from("targeting_campaigns").select("id, name, is_active, niche").eq("is_active", true).limit(10),
-        supabase.from("whitelist").select("id, username, added_at").order("added_at", { ascending: false }).limit(3),
-        supabase.from("whitelist").select("id", { count: "exact", head: true }),
-        supabase.from("user_settings").select("automation_paused").limit(1).maybeSingle(),
+        supabase.from("targeting_campaigns").select("id, name, is_active, niche").eq("user_id", user.id).eq("is_active", true).limit(10),
+        supabase.from("whitelist").select("id, username, added_at").eq("user_id", user.id).order("added_at", { ascending: false }).limit(3),
+        supabase.from("whitelist").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+        supabase.from("user_settings").select("automation_paused").eq("user_id", user.id).limit(1).maybeSingle(),
         accountId
           ? supabase.from("bot_commands").select("id, command, status, created_at, executed_at").eq("ig_account_id", accountId).order("created_at", { ascending: false }).limit(5)
           : Promise.resolve({ data: [], error: null }),

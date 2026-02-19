@@ -16,7 +16,13 @@ interface ActionRow {
   action_type: string;
   target_username: string | null;
   status: string;
+  ig_account_id: string | null;
   isNew?: boolean;
+}
+
+interface IgAccount {
+  id: string;
+  ig_username: string;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -36,6 +42,8 @@ const MAX_ACTIONS = 200;
 
 export default function Actions() {
   const { user } = useAuth();
+  const [igAccounts, setIgAccounts] = useState<IgAccount[]>([]);
+  const [filterAccountId, setFilterAccountId] = useState<string>("all");
   const [actions, setActions] = useState<ActionRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -45,15 +53,33 @@ export default function Actions() {
   const PAGE_SIZE = 50;
   const newBadgeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // Load IG accounts for account filter
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from("ig_accounts")
+      .select("id, ig_username")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .order("created_at")
+      .then(({ data }) => setIgAccounts((data ?? []) as IgAccount[]));
+  }, [user]);
+
   const load = useCallback(async (p = 0) => {
     if (!user) return;
     setIsLoading(true);
     let q = supabase
       .from("action_log")
-      .select("id, executed_at, action_type, target_username, status")
-      .eq("user_id", user.id)
+      .select("id, executed_at, action_type, target_username, status, ig_account_id")
       .order("executed_at", { ascending: false })
       .range(p * PAGE_SIZE, (p + 1) * PAGE_SIZE - 1);
+
+    // Filter by specific account or by user's accounts
+    if (filterAccountId !== "all") {
+      q = q.eq("ig_account_id", filterAccountId);
+    } else {
+      q = q.eq("user_id", user.id);
+    }
 
     if (filterType !== "all") q = q.eq("action_type", filterType);
     if (filterStatus !== "all") q = q.eq("status", filterStatus);
@@ -62,26 +88,32 @@ export default function Actions() {
     if (error) toast.error("Erro ao carregar ações");
     else setActions(p === 0 ? (data ?? []) : (prev) => [...prev, ...(data ?? [])] as ActionRow[]);
     setIsLoading(false);
-  }, [user, filterType, filterStatus]);
+  }, [user, filterType, filterStatus, filterAccountId]);
 
   useEffect(() => { setPage(0); load(0); }, [load]);
 
-  // Realtime subscription
+  // Realtime subscription — filtra por ig_account_id (mais preciso que user_id)
   useEffect(() => {
     if (!user) return;
 
+    // Choose the best realtime filter: specific account or user-level
+    const realtimeFilter = filterAccountId !== "all"
+      ? `ig_account_id=eq.${filterAccountId}`
+      : `user_id=eq.${user.id}`;
+
     const channel = supabase
-      .channel(`actions-realtime-${user.id}`)
+      .channel(`actions-realtime-${user.id}-${filterAccountId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "action_log", filter: `user_id=eq.${user.id}` },
+        { event: "INSERT", schema: "public", table: "action_log", filter: realtimeFilter },
         (payload) => {
           const newRow = payload.new as ActionRow;
 
           // Only show if it matches current filters
           const matchesType = filterType === "all" || newRow.action_type === filterType;
           const matchesStatus = filterStatus === "all" || newRow.status === filterStatus;
-          if (!matchesType || !matchesStatus) return;
+          const matchesAccount = filterAccountId === "all" || newRow.ig_account_id === filterAccountId;
+          if (!matchesType || !matchesStatus || !matchesAccount) return;
 
           setActions((prev) => {
             const withNew = [{ ...newRow, isNew: true }, ...prev].slice(0, MAX_ACTIONS);
@@ -102,11 +134,10 @@ export default function Actions() {
 
     return () => {
       supabase.removeChannel(channel);
-      // Clear all timers on unmount
       newBadgeTimers.current.forEach((t) => clearTimeout(t));
       newBadgeTimers.current.clear();
     };
-  }, [user, filterType, filterStatus]);
+  }, [user, filterType, filterStatus, filterAccountId]);
 
   const loadMore = () => { const next = page + 1; setPage(next); load(next); };
 
@@ -140,6 +171,19 @@ export default function Actions() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por usuário…" className="pl-8 bg-secondary/50 border-border/60 h-9 text-sm" />
         </div>
+        {igAccounts.length > 1 && (
+          <Select value={filterAccountId} onValueChange={(v) => { setFilterAccountId(v); setPage(0); }}>
+            <SelectTrigger className="w-40 h-9 text-sm glass-card border-border/60">
+              <SelectValue placeholder="Conta" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as contas</SelectItem>
+              {igAccounts.map((a) => (
+                <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Select value={filterType} onValueChange={setFilterType}>
           <SelectTrigger className="w-36 h-9 text-sm glass-card border-border/60">
             <SelectValue placeholder="Tipo" />

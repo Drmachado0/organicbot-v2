@@ -668,15 +668,32 @@ function InstagramAccountsSection({ userId }: { userId: string }) {
 
 // ─── Extension Sync Section ───────────────────────────────────────────────────
 
-function ExtensionSyncSection({ userId, igAccountId }: { userId: string; igAccountId: string | undefined }) {
+function ExtensionSyncSection({ userId }: { userId: string }) {
   const [syncing, setSyncing] = useState(false);
+  const [accounts, setAccounts] = useState<{ id: string; ig_username: string; last_heartbeat: string | null }[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+
+  useEffect(() => {
+    if (!userId) return;
+    supabase
+      .from("ig_accounts")
+      .select("id, ig_username, last_heartbeat")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .order("created_at")
+      .then(({ data }) => {
+        const accs = (data ?? []) as { id: string; ig_username: string; last_heartbeat: string | null }[];
+        setAccounts(accs);
+        if (accs.length > 0) setSelectedId(accs[0].id);
+      });
+  }, [userId]);
 
   const forceSync = async () => {
-    if (!igAccountId) { toast.error("Selecione uma conta no Dashboard primeiro"); return; }
+    if (!selectedId) { toast.error("Nenhuma conta disponível"); return; }
     setSyncing(true);
     try {
       const { error } = await supabase.rpc("send_bot_command", {
-        p_ig_account_id: igAccountId,
+        p_ig_account_id: selectedId,
         p_command: "reload_settings",
         p_params: {},
       });
@@ -689,20 +706,26 @@ function ExtensionSyncSection({ userId, igAccountId }: { userId: string; igAccou
     }
   };
 
-  // just silence unused warning
-  void userId;
+  const selectedAccount = accounts.find((a) => a.id === selectedId);
+  const getExtStatus = (hb: string | null) => {
+    if (!hb) return { label: "Offline", color: "hsl(215 20% 45%)" };
+    const diff = Date.now() - new Date(hb).getTime();
+    if (diff < 6 * 60 * 1000) return { label: "Ativa", color: "hsl(152 72% 48%)" };
+    if (diff < 30 * 60 * 1000) return { label: "Ausente", color: "hsl(42 96% 56%)" };
+    return { label: "Offline", color: "hsl(215 20% 45%)" };
+  };
 
   const syncedFields = [
-    { key: "schedule_hours", label: "Horários de operação" },
-    { key: "delay_min / delay_max", label: "Delays mínimo e máximo" },
-    { key: "follow_daily_limit", label: "Limite diário de follow" },
-    { key: "unfollow_daily_limit", label: "Limite diário de unfollow" },
-    { key: "like_daily_limit", label: "Limite diário de like" },
-    { key: "dont_unfollow_followers", label: "Proteger seguidores de unfollow" },
-    { key: "dont_unfollow_fresh", label: "Aguardar dias antes do unfollow" },
-    { key: "dont_unfollow_non_organicbot", label: "Só desfazer follows do bot" },
-    { key: "randomize_delay", label: "Randomizar delays" },
-    { key: "randomize_percent", label: "Percentual de variação" },
+    "Horários de operação (schedule_hours)",
+    "Delays mínimo e máximo",
+    "Limite diário de follow",
+    "Limite diário de unfollow",
+    "Limite diário de like",
+    "Proteger seguidores de unfollow",
+    "Aguardar dias antes do unfollow",
+    "Só desfazer follows do bot",
+    "Randomizar delays",
+    "Percentual de variação",
   ];
 
   return (
@@ -710,35 +733,65 @@ function ExtensionSyncSection({ userId, igAccountId }: { userId: string; igAccou
       title="Sincronização com Extensão Chrome"
       icon={<Zap className="h-4 w-4" style={{ color: "hsl(42 96% 56%)" }} />}
     >
+      {/* Account selector + status */}
+      {accounts.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
+          {accounts.length > 1 ? (
+            <select
+              value={selectedId}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="h-9 rounded-md border border-border/60 bg-background px-3 text-sm flex-1"
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>@{a.ig_username}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-sm font-semibold flex-1">@{selectedAccount?.ig_username}</span>
+          )}
+          {selectedAccount && (() => {
+            const s = getExtStatus(selectedAccount.last_heartbeat);
+            return (
+              <span
+                className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0"
+                style={{ color: s.color, backgroundColor: `${s.color.replace(")", " / 0.12)")}` }}
+              >
+                Extensão {s.label}
+              </span>
+            );
+          })()}
+        </div>
+      )}
+
       <div
         className="rounded-xl p-4 space-y-3"
         style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(42 96% 56% / 0.2)" }}
       >
         <p className="text-xs text-muted-foreground">
-          As configurações abaixo são lidas automaticamente pela extensão a cada <strong className="text-foreground">2 minutos</strong>.
-          Use o botão abaixo para forçar um sync imediato (a extensão lerá o comando em até 45s).
+          As configurações abaixo são sincronizadas automaticamente a cada <strong className="text-foreground">2 minutos</strong>.
+          Use o botão para forçar o sync imediato.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {syncedFields.map((f) => (
-            <div key={f.key} className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div key={f} className="flex items-center gap-2 text-xs text-muted-foreground">
               <CheckCircle2 className="h-3 w-3 flex-shrink-0" style={{ color: "hsl(152 72% 48%)" }} />
-              <span>{f.label}</span>
+              <span>{f}</span>
             </div>
           ))}
         </div>
         <Button
           size="sm"
           onClick={forceSync}
-          disabled={syncing || !igAccountId}
+          disabled={syncing || !selectedId}
           className="gap-1.5 w-full mt-1"
           style={{ backgroundColor: "hsl(42 96% 56%)", color: "hsl(222 25% 6%)" }}
         >
           {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
           Forçar sync agora
         </Button>
-        {!igAccountId && (
+        {accounts.length === 0 && (
           <p className="text-xs text-muted-foreground/60 text-center">
-            Abra o Dashboard e selecione uma conta para ativar o sync forçado.
+            Nenhuma conta conectada. Adicione uma conta acima para ativar o sync.
           </p>
         )}
       </div>
@@ -1011,7 +1064,7 @@ export default function BotSettings() {
           {user && <InstagramAccountsSection userId={user.id} />}
 
           {/* ── Extension Sync ── */}
-          <ExtensionSyncSection userId={user?.id ?? ""} igAccountId={undefined} />
+          <ExtensionSyncSection userId={user?.id ?? ""} />
 
           {/* Row 3: Filters + Notifications */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
