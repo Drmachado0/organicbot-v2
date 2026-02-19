@@ -1,81 +1,107 @@
 
-## 🚀 Dashboard "Organic Pro" — Plano de Implementação
+# Revisão Completa — Organic Pro
 
-### Visão Geral
-Construir um dashboard principal moderno e rico em dados para a plataforma de automação de crescimento no Instagram, com tema escuro, glass cards, gráficos interativos e atualizações em tempo real via Supabase Realtime.
+## Estado Atual do Projeto
 
----
+### Implementado e Funcional
+- **Dashboard** (`/dashboard`): KPIs, gráficos, LiveStatusBar, toggle do bot, realtime via Supabase
+- **Campanhas** (`/campaigns`): CRUD completo com TagInput para hashtags/concorrentes, TargetQueuePanel, ativar/desativar
+- **Relatórios** (`/reports`): Gráficos Recharts (ações diárias, crescimento, sessões), exportação CSV, seletor de período
+- **Whitelist** (`/whitelist`): Lista com busca debounced, paginação server-side, adicionar/remover
+- **Log de Ações** (`/actions`): Filtro por tipo/status, paginação, busca por username
+- **Settings** (`/settings`): Limites diários, delays, agendamento por hora, filtros do bot, bridge token
+- **Sidebar**: Realtime subscription para atualizar nome/avatar automaticamente
+- **Auth**: Login, registro, reset de senha, rotas protegidas
 
-### 1. Hook de Dados (`useDashboardV2.ts`)
-- Busca paralela de todas as fontes de dados (action_log, daily_action_cache, growth_stats, target_queue, ig_accounts, session_stats, targeting_campaigns)
-- Subscription em tempo real via `supabase.channel()` para novos registros em `action_log`
-- Debounce de 2s no refetch do realtime para evitar sobrecarga
-- Função `toggleBot()` para iniciar/pausar o bot via `user_settings`
-- Seletor de conta ativa integrado
+### Lacunas e Melhorias Identificadas
 
----
+#### 1. Campanhas — Falta "Injetar Targets"
+O botão para popular a `target_queue` a partir dos concorrentes/hashtags da campanha ainda não existe. A função `add_targets_batch` já está no banco, mas nunca é chamada pelo frontend.
 
-### 2. Componentes Individuais (`src/components/dashboard/`)
+#### 2. Actions — Sem Realtime
+A página `/actions` não tem subscription em tempo real. Novos registros em `action_log` só aparecem após refresh manual.
 
-**`LiveStatusBar.tsx`**
-- Banner full-width com status do bot (online/offline com dot animado)
-- Modo atual (Follow / Unfollow / Mixed)
-- Tempo de sessão em execução
-- Countdown regressivo para próxima ação
+#### 3. Reports — Sem Realtime / Sem Comparativo
+A página de relatórios não tem comparação entre períodos (ex: esta semana vs semana anterior) e não atualiza automaticamente quando novas sessões terminam.
 
-**`ActionProgressCard.tsx`**
-- 3 progress bars empilhadas: Follow, Unfollow, Like
-- Percentual de uso do limite diário por tipo
-- Cores distintas por ação
+#### 4. Dashboard — Bot Commands ausentes
+O `useDashboardV2` chama `toggleBot()` via `user_settings.automation_paused`, mas a tabela `bot_commands` (com a função `send_bot_command`) nunca é usada. O bot real usa comandos, não só o flag.
 
-**`KpiCard.tsx`** (reutilizável para Fila Pendente, Taxa de Sucesso, Status da Conta)
-- Número grande + label
-- Badge de urgência condicional
-- Delta/tendência com ícone
+#### 5. Settings — Agendamento visual pouco intuitivo
+O grid de 24 horas existe mas não tem labels AM/PM, nem indicador visual do horário atual.
 
-**`ActionsAreaChart.tsx`**
-- AreaChart Recharts com 3 séries (Follow verde, Unfollow vermelho, Like rosa)
-- Toggle de período: 7d / 30d / 90d
-- Tooltip customizado dark-style
+#### 6. Whitelist — Sem filtro por conta Instagram
+A whitelist filtra por `user_id` mas não por `ig_account_id`, então não é possível ver a whitelist separada por conta.
 
-**`FollowersGrowthChart.tsx`**
-- LineChart de seguidores dos últimos 14 dias
-- Delta total + pico + média diária
-
-**`SessionsTable.tsx`**
-- Últimas 5 sessões do bot
-- Colunas: Data, Duração, Follows, Erros, Taxa de Sucesso
-- Coloração de linha baseada na taxa de sucesso
-
-**`RecentActionsTable.tsx`**
-- Últimas 20 ações com filtro por tipo
-- Animação de entrada para novas linhas (realtime)
-- Badges coloridos por tipo de ação
-
-**`CampaignsCard.tsx`**
-- Lista de campanhas ativas com nome, tipo e badge de status
-
-**`HealthAlertsCard.tsx`**
-- Alertas inteligentes (limite atingido, taxa de erro alta, fila vazia, etc.)
-- Ícones de severidade (✅ / ⚠️ / 🔔)
+#### 7. Sem notificações/alertas push
+O `HealthAlertsCard` exibe alertas, mas não há sistema de notificação persistente (toast proativo quando o bot vai offline, por exemplo).
 
 ---
 
-### 3. Página Principal (`src/pages/Dashboard.tsx`)
-- **Header**: Título + Seletor de conta + Botão Iniciar/Pausar Bot (verde pulsante quando ativo)
-- **Row 1**: LiveStatusBar (full-width)
-- **Row 2**: 4 KPI Cards em grid responsivo (2x2 mobile → 4 colunas desktop)
-- **Row 3**: ActionsAreaChart (full-width)
-- **Row 4**: FollowersGrowthChart + SessionsTable (side-by-side)
-- **Row 5**: RecentActionsTable (full-width)
-- **Row 6**: CampaignsCard + WhitelistCard + HealthAlertsCard (3 colunas)
-- Loading com skeletons, empty state para conta não conectada, error state com toast
+## Próximas Implementações — Ordem de Prioridade
+
+### Prioridade 1 — Injetar Targets nas Campanhas
+Adicionar botão "Injetar Targets" em cada campanha ativa que chama `add_targets_batch` com os usernames dos concorrentes definidos na campanha. Mostra modal com progresso e resultado (quantos inseridos, quantos já existiam).
+
+**Arquivos afetados:** `src/pages/Campaigns.tsx`
+
+### Prioridade 2 — Realtime no Log de Ações
+Adicionar subscription Supabase Realtime na página `/actions` para novos INSERTs em `action_log`, com animação de entrada na nova linha e badge "novo" temporário.
+
+**Arquivos afetados:** `src/pages/Actions.tsx`
+
+### Prioridade 3 — Bot Commands via `send_bot_command`
+No Dashboard, substituir o toggle simples por chamadas reais à função `send_bot_command` para os comandos `start`, `pause`, `stop`. Exibir o histórico dos últimos comandos enviados com status (pending/executed).
+
+**Arquivos afetados:** `src/pages/Dashboard.tsx`, `src/hooks/useDashboardV2.ts`
+
+### Prioridade 4 — Comparativo de Período em Reports
+Adicionar linha "período anterior" nos gráficos de ações e crescimento para comparação visual (ex: esta semana vs semana passada). Exibir delta percentual nos KPIs.
+
+**Arquivos afetados:** `src/pages/Reports.tsx`
+
+### Prioridade 5 — Filtro por Conta no Whitelist
+Adicionar seletor de conta Instagram no topo da página `/whitelist` para filtrar a lista por `ig_account_id`. Útil quando o usuário tem múltiplas contas.
+
+**Arquivos afetados:** `src/pages/Whitelist.tsx`
 
 ---
 
-### 4. Design System Aplicado
-- Tema escuro por padrão com paleta emerald/cyberpunk
-- Glass cards: `backdrop-blur + ring-1 ring-border/40`
-- Animações: `animate-fade-in` na entrada, `animate-ping` nos indicadores ao vivo
-- Grid responsivo mobile-first (1 coluna → 2 → 4)
-- Rota `/dashboard` adicionada no `App.tsx`
+## Detalhes Técnicos
+
+### Injetar Targets (Prioridade 1)
+```text
+Campanha ativa → Botão "Injetar Targets"
+→ Modal: selecionar conta Instagram de destino
+→ Extrair array de competitors[] da campanha
+→ Chamar: supabase.rpc("add_targets_batch", {
+     p_ig_account_id: selectedAccountId,
+     p_usernames: competitors,
+     p_source: "campaign"
+  })
+→ Toast com resultado: "X targets adicionados"
+→ TargetQueuePanel atualiza automaticamente
+```
+
+### Realtime no Log de Ações (Prioridade 2)
+```text
+useEffect → supabase.channel("actions-realtime-{userId}")
+  .on("postgres_changes", { event: "INSERT", table: "action_log" }, handler)
+→ Prepend nova linha com classe "animate-fade-in"
+→ Badge "NOVO" desaparece após 3s
+→ Limitar lista a 200 entradas para evitar overflow de memória
+```
+
+### Bot Commands (Prioridade 3)
+```text
+toggleBot() atual:
+  UPDATE user_settings SET automation_paused = true
+
+toggleBot() novo:
+  supabase.rpc("send_bot_command", {
+    p_ig_account_id: activeAccountId,
+    p_command: "pause" | "start",
+    p_params: {}
+  })
+  + UPDATE user_settings (mantém flag como fallback)
+```
