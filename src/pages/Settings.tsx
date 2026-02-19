@@ -523,6 +523,7 @@ function InstagramAccountsSection({ userId }: { userId: string }) {
   };
 
   return (
+    <>
     <SectionCard
       title="Contas Instagram Conectadas"
       icon={<Instagram className="h-4 w-4" style={{ color: "hsl(320 65% 60%)" }} />}
@@ -659,6 +660,9 @@ function InstagramAccountsSection({ userId }: { userId: string }) {
         </div>
       )}
     </SectionCard>
+
+    {accounts.length > 0 && <BridgeTokenSection accounts={accounts} />}
+  </>
   );
 }
 
@@ -1053,7 +1057,6 @@ export default function BotSettings() {
           )}
         </div>
       )}
-      {accounts.length > 0 && <BridgeTokenSection accounts={accounts} />
     </AppShell>
   );
 }
