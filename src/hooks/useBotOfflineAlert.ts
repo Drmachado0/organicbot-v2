@@ -45,6 +45,7 @@ export function useBotOfflineAlert(user: User | null) {
 
           const wasOnline = prevOnline.current[row.id] ?? false;
           const isNowOffline = !row.bot_online;
+          const isNowOnline = row.bot_online === true;
 
           if (wasOnline && isNowOffline) {
             toast.warning(`@${row.ig_username} — Bot ficou offline`, {
@@ -56,6 +57,13 @@ export function useBotOfflineAlert(user: User | null) {
                   window.location.href = "/extension";
                 },
               },
+            });
+          }
+
+          if (!wasOnline && isNowOnline) {
+            toast.success(`@${row.ig_username} — Bot voltou online ✓`, {
+              description: "A extensão está enviando heartbeat novamente.",
+              duration: 5000,
             });
           }
 
