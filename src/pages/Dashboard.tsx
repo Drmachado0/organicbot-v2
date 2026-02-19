@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Play,
   Pause,
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 
 export default function Dashboard() {
+  const [searchParams] = useSearchParams();
   const {
     accounts,
     activeAccountId,
@@ -48,6 +50,15 @@ export default function Dashboard() {
     toggleBot,
     refresh,
   } = useDashboardV2();
+
+  // Deep link: ?account=@username auto-selects the matching account
+  useEffect(() => {
+    const accountParam = searchParams.get("account");
+    if (!accountParam || !accounts.length || activeAccountId) return;
+    const clean = accountParam.replace(/^@/, "").toLowerCase();
+    const match = accounts.find((a) => a.ig_username.toLowerCase() === clean);
+    if (match) setActiveAccountId(match.id);
+  }, [searchParams, accounts, activeAccountId, setActiveAccountId]);
 
   useEffect(() => {
     if (error) toast.error(error);

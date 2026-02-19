@@ -13,6 +13,7 @@ import Reports from "./pages/Reports";
 import BotSettings from "./pages/Settings";
 import Whitelist from "./pages/Whitelist";
 import Actions from "./pages/Actions";
+import ExtensionPage from "./pages/Extension";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
@@ -72,6 +73,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <Actions />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/extension"
+            element={
+              <ProtectedRoute>
+                <ExtensionPage />
               </ProtectedRoute>
             }
           />

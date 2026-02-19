@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   User,
+  Chrome,
 } from "lucide-react";
 import {
   Sidebar,
@@ -29,12 +30,13 @@ import { NavLink } from "@/components/NavLink";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/campaigns",  icon: Target,          label: "Campanhas"     },
+  { to: "/dashboard",  icon: LayoutDashboard, label: "Dashboard"      },
+  { to: "/campaigns",  icon: Target,          label: "Campanhas"      },
   { to: "/reports",    icon: BarChart2,        label: "Relatórios"    },
   { to: "/whitelist",  icon: Shield,           label: "Whitelist"     },
   { to: "/actions",    icon: List,             label: "Log de Ações"  },
-  { to: "/settings",  icon: Settings,         label: "Configurações" },
+  { to: "/extension",  icon: Chrome,           label: "Extensão"      },
+  { to: "/settings",   icon: Settings,         label: "Configurações" },
 ];
 
 interface Profile {
