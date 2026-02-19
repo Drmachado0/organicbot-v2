@@ -27,6 +27,7 @@ import {
   ListOrdered,
   Eraser,
   RefreshCw,
+  Zap,
 } from "lucide-react";
 
 interface Campaign {
@@ -112,6 +113,163 @@ const EMPTY_FORM = {
   competitors: [] as string[],
   is_active: false,
 };
+
+// ─── Inject Targets Modal ────────────────────────────────────────────────────
+
+interface InjectModalProps {
+  campaign: Campaign;
+  userId: string;
+  onClose: () => void;
+  onInjected: () => void;
+}
+
+function InjectModal({ campaign, userId, onClose, onInjected }: InjectModalProps) {
+  const [accounts, setAccounts] = useState<{ id: string; ig_username: string }[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [isInjecting, setIsInjecting] = useState(false);
+
+  useEffect(() => {
+    supabase
+      .from("ig_accounts")
+      .select("id, ig_username")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .order("created_at")
+      .then(({ data }) => {
+        const accs = (data ?? []) as { id: string; ig_username: string }[];
+        setAccounts(accs);
+        if (accs.length > 0) setSelectedId(accs[0].id);
+      });
+  }, [userId]);
+
+  const totalTargets = campaign.competitors.length;
+
+  const handleInject = async () => {
+    if (!selectedId || campaign.competitors.length === 0) return;
+    setIsInjecting(true);
+    try {
+      const { data, error } = await supabase.rpc("add_targets_batch", {
+        p_ig_account_id: selectedId,
+        p_usernames: campaign.competitors,
+        p_source: "campaign",
+      });
+      if (error) throw error;
+      const added = typeof data === "number" ? data : 0;
+      const skipped = totalTargets - added;
+      if (added === 0) {
+        toast.info("Todos os targets já estavam na fila");
+      } else if (skipped > 0) {
+        toast.success(`${added} targets adicionados (${skipped} já existiam na fila)`);
+      } else {
+        toast.success(`${added} targets adicionados à fila com sucesso!`);
+      }
+      onInjected();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao injetar targets");
+    } finally {
+      setIsInjecting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "hsl(222 25% 4% / 0.8)" }}>
+      <div
+        className="glass-card rounded-2xl p-6 w-full max-w-md space-y-5 animate-fade-in"
+        style={{ border: "1px solid hsl(152 72% 48% / 0.3)" }}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <Zap className="h-4 w-4" style={{ color: "hsl(152 72% 48%)" }} />
+              <h2 className="font-semibold text-base">Injetar Targets</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Adicionar concorrentes da campanha à fila de targets
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Campaign info */}
+        <div
+          className="rounded-xl p-3 space-y-1.5"
+          style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(220 18% 18%)" }}
+        >
+          <p className="text-sm font-medium">{campaign.name}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {campaign.competitors.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Nenhum concorrente configurado nesta campanha</p>
+            ) : (
+              campaign.competitors.map((c) => (
+                <Badge
+                  key={c}
+                  className="text-xs"
+                  style={{ backgroundColor: "hsl(42 96% 56% / 0.12)", color: "hsl(42 96% 56%)", border: "1px solid hsl(42 96% 56% / 0.25)" }}
+                >
+                  @{c}
+                </Badge>
+              ))
+            )}
+          </div>
+          {campaign.competitors.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {campaign.competitors.length} concorrente{campaign.competitors.length !== 1 ? "s" : ""} serão adicionados à fila
+            </p>
+          )}
+        </div>
+
+        {/* Account selector */}
+        <div className="space-y-2">
+          <Label className="text-sm text-muted-foreground">Conta Instagram de destino</Label>
+          {accounts.length === 0 ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando contas…
+            </div>
+          ) : (
+            <Select value={selectedId} onValueChange={setSelectedId}>
+              <SelectTrigger className="glass-card border-border/60 h-9 text-sm">
+                <SelectValue placeholder="Selecionar conta" />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 pt-1">
+          <Button variant="ghost" size="sm" onClick={onClose} className="flex-1 h-9">
+            Cancelar
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleInject}
+            disabled={isInjecting || !selectedId || campaign.competitors.length === 0}
+            className="flex-1 h-9 gap-1.5 font-semibold"
+            style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}
+          >
+            {isInjecting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Zap className="h-3.5 w-3.5" />
+            )}
+            {isInjecting ? "Injetando…" : "Injetar Targets"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Target Queue Panel ─────────────────────────────────────────────────────
 
@@ -266,6 +424,8 @@ export default function Campaigns() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [form, setForm] = useState({ ...EMPTY_FORM });
+  const [injectCampaign, setInjectCampaign] = useState<Campaign | null>(null);
+  const [queueRefreshKey, setQueueRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -563,6 +723,7 @@ export default function Campaigns() {
                     onEdit={() => openEdit(c)}
                     onDelete={() => deleteCampaign(c.id)}
                     onToggleActive={() => toggleActive(c)}
+                    onInject={() => setInjectCampaign(c)}
                   />
                 ))}
               </div>
@@ -585,6 +746,7 @@ export default function Campaigns() {
                     onEdit={() => openEdit(c)}
                     onDelete={() => deleteCampaign(c.id)}
                     onToggleActive={() => toggleActive(c)}
+                    onInject={() => setInjectCampaign(c)}
                   />
                 ))}
               </div>
@@ -594,9 +756,19 @@ export default function Campaigns() {
       )}
 
       {/* ── Target Queue Panel ── */}
-      {user && <TargetQueuePanel userId={user.id} />}
+      {user && <TargetQueuePanel key={queueRefreshKey} userId={user.id} />}
 
       </div>
+
+      {/* ── Inject Modal ── */}
+      {injectCampaign && user && (
+        <InjectModal
+          campaign={injectCampaign}
+          userId={user.id}
+          onClose={() => setInjectCampaign(null)}
+          onInjected={() => setQueueRefreshKey((k) => k + 1)}
+        />
+      )}
     </AppShell>
   );
 }
@@ -610,9 +782,10 @@ interface CampaignRowProps {
   onEdit: () => void;
   onDelete: () => void;
   onToggleActive: () => void;
+  onInject: () => void;
 }
 
-function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete, onToggleActive }: CampaignRowProps) {
+function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete, onToggleActive, onInject }: CampaignRowProps) {
   const totalSignals = c.hashtags.length + c.competitors.length;
 
   return (
@@ -658,6 +831,16 @@ function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete
 
         {/* Actions */}
         <div className="flex items-center gap-1 flex-shrink-0">
+          {/* Inject button — only when has competitors */}
+          {c.competitors.length > 0 && (
+            <button
+              onClick={onInject}
+              title="Injetar targets na fila"
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Zap className="h-3.5 w-3.5" style={{ color: "hsl(152 72% 48%)" }} />
+            </button>
+          )}
           <button
             onClick={onToggleActive}
             title={c.is_active ? "Desativar" : "Ativar"}
@@ -735,6 +918,15 @@ function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete
                   </Badge>
                 ))}
               </div>
+              {/* Quick inject from expanded */}
+              <button
+                onClick={onInject}
+                className="mt-1 flex items-center gap-1.5 text-xs font-medium transition-colors"
+                style={{ color: "hsl(152 72% 48%)" }}
+              >
+                <Zap className="h-3 w-3" />
+                Injetar {c.competitors.length} targets na fila
+              </button>
             </div>
           )}
         </div>

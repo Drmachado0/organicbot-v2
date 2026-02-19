@@ -12,6 +12,7 @@ import {
   Download,
   RefreshCw,
   TrendingUp,
+  TrendingDown,
   Users,
   Activity,
   Calendar,
@@ -116,6 +117,26 @@ function DarkTooltip({ active, payload, label }: { active?: boolean; payload?: {
   );
 }
 
+// ─── Delta Badge ──────────────────────────────────────────────────────────────
+
+function DeltaBadge({ current, previous }: { current: number; previous: number }) {
+  if (previous === 0) return null;
+  const pct = Math.round(((current - previous) / previous) * 100);
+  const positive = pct >= 0;
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 text-xs font-semibold px-1.5 py-0.5 rounded-full"
+      style={{
+        backgroundColor: positive ? "hsl(152 72% 48% / 0.12)" : "hsl(0 72% 55% / 0.12)",
+        color: positive ? "hsl(152 72% 48%)" : "hsl(0 72% 55%)",
+      }}
+    >
+      {positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+      {positive ? "+" : ""}{pct}%
+    </span>
+  );
+}
+
 // ─── Period options ───────────────────────────────────────────────────────────
 
 const PERIODS = [
@@ -137,11 +158,16 @@ export default function Reports() {
   const [growthHistory, setGrowthHistory] = useState<GrowthPoint[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
 
-  // Summary KPIs
+  // Previous period data for comparison
+  const [prevFollows, setPrevFollows] = useState(0);
+  const [prevUnfollows, setPrevUnfollows] = useState(0);
+  const [prevLikes, setPrevLikes] = useState(0);
+  const [prevFollowersDelta, setPrevFollowersDelta] = useState(0);
+
+  // Summary KPIs (current period)
   const totalFollows = dailyActions.reduce((s, d) => s + d.follow, 0);
   const totalUnfollows = dailyActions.reduce((s, d) => s + d.unfollow, 0);
   const totalLikes = dailyActions.reduce((s, d) => s + d.like, 0);
-  const totalActions = totalFollows + totalUnfollows + totalLikes;
 
   const followersDelta = (() => {
     if (growthHistory.length < 2) return 0;
@@ -161,7 +187,11 @@ export default function Reports() {
       const since = new Date(Date.now() - days * 86400000).toISOString().split("T")[0];
       const sinceTs = new Date(Date.now() - days * 86400000).toISOString();
 
-      const [actionsRes, growthRes, sessionsRes, accountsRes] = await Promise.all([
+      // Previous period (same window, shifted back)
+      const prevSince = new Date(Date.now() - 2 * days * 86400000).toISOString().split("T")[0];
+      const prevSinceTs = new Date(Date.now() - 2 * days * 86400000).toISOString();
+
+      const [actionsRes, growthRes, sessionsRes, accountsRes, prevActionsRes, prevGrowthRes] = await Promise.all([
         accountId
           ? supabase
               .from("daily_action_cache")
@@ -192,6 +222,26 @@ export default function Reports() {
           .from("ig_accounts")
           .select("id, ig_username")
           .order("created_at", { ascending: true }),
+        // Previous period actions
+        accountId
+          ? supabase
+              .from("daily_action_cache")
+              .select("action_type, success_count")
+              .eq("ig_account_id", accountId)
+              .gte("day", prevSince)
+              .lt("day", since)
+          : Promise.resolve({ data: [], error: null }),
+        // Previous period growth
+        accountId
+          ? supabase
+              .from("growth_stats")
+              .select("recorded_at, followers_count")
+              .eq("ig_account_id", accountId)
+              .gte("recorded_at", prevSinceTs)
+              .lt("recorded_at", sinceTs)
+              .order("recorded_at", { ascending: true })
+              .limit(500)
+          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (accountsRes.data) {
@@ -227,12 +277,32 @@ export default function Reports() {
         const end = s.session_end ? new Date(s.session_end).getTime() : null;
         const dur = start && end ? Math.round((end - start) / 60000) : null;
         const total = (s.follows_count ?? 0) + (s.unfollows_count ?? 0) + (s.likes_count ?? 0);
-        const success = total;
         const errors = s.errors_count ?? 0;
-        const rate = total + errors > 0 ? Math.round((success / (success + errors)) * 100) : 100;
+        const rate = total + errors > 0 ? Math.round((total / (total + errors)) * 100) : 100;
         return { ...s, duration_min: dur ?? 0, success_rate: rate };
       });
       setSessions(sess);
+
+      // Previous period KPIs
+      let pF = 0, pU = 0, pL = 0;
+      for (const row of (prevActionsRes.data ?? []) as { action_type: string; success_count: number | null }[]) {
+        const t = row.action_type.toLowerCase();
+        const v = row.success_count ?? 0;
+        if (t === "follow") pF += v;
+        else if (t === "unfollow") pU += v;
+        else if (t === "like") pL += v;
+      }
+      setPrevFollows(pF);
+      setPrevUnfollows(pU);
+      setPrevLikes(pL);
+
+      const prevGData = (prevGrowthRes.data ?? []) as { recorded_at: string; followers_count: number | null }[];
+      if (prevGData.length >= 2) {
+        const pDelta = (prevGData.at(-1)?.followers_count ?? 0) - (prevGData[0]?.followers_count ?? 0);
+        setPrevFollowersDelta(pDelta);
+      } else {
+        setPrevFollowersDelta(0);
+      }
     } catch {
       toast.error("Erro ao carregar relatórios");
     } finally {
@@ -335,24 +405,60 @@ export default function Reports() {
         </Button>
       </div>
 
-      {/* ── Summary KPI strip ── */}
+      {/* ── Summary KPI strip with delta comparison ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         {[
-          { label: "Follows", value: totalFollows, color: "hsl(152 72% 48%)", icon: <Users className="h-4 w-4" /> },
-          { label: "Unfollows", value: totalUnfollows, color: "hsl(0 72% 55%)", icon: <Activity className="h-4 w-4" /> },
-          { label: "Likes", value: totalLikes, color: "hsl(320 65% 60%)", icon: <TrendingUp className="h-4 w-4" /> },
-          { label: "Crescimento", value: followersDelta >= 0 ? `+${followersDelta}` : followersDelta, color: "hsl(42 96% 56%)", icon: <TrendingUp className="h-4 w-4" /> },
-        ].map(({ label, value, color, icon }) => (
+          {
+            label: "Follows",
+            value: totalFollows,
+            prev: prevFollows,
+            color: "hsl(152 72% 48%)",
+            icon: <Users className="h-4 w-4" />,
+          },
+          {
+            label: "Unfollows",
+            value: totalUnfollows,
+            prev: prevUnfollows,
+            color: "hsl(0 72% 55%)",
+            icon: <Activity className="h-4 w-4" />,
+          },
+          {
+            label: "Likes",
+            value: totalLikes,
+            prev: prevLikes,
+            color: "hsl(320 65% 60%)",
+            icon: <TrendingUp className="h-4 w-4" />,
+          },
+          {
+            label: "Crescimento",
+            value: followersDelta >= 0 ? `+${followersDelta}` : String(followersDelta),
+            prev: prevFollowersDelta,
+            rawValue: followersDelta,
+            color: "hsl(42 96% 56%)",
+            icon: <TrendingUp className="h-4 w-4" />,
+          },
+        ].map(({ label, value, prev, rawValue, color, icon }) => (
           <div key={label} className="glass-card rounded-xl p-4 animate-fade-in">
             {isLoading ? (
-              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-14 w-full" />
             ) : (
               <>
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-xs text-muted-foreground uppercase tracking-widest">{label}</p>
                   <span style={{ color }}>{icon}</span>
                 </div>
-                <p className="text-2xl font-bold" style={{ color }}>{typeof value === "number" ? value.toLocaleString() : value}</p>
+                <p className="text-2xl font-bold" style={{ color }}>
+                  {typeof value === "number" ? value.toLocaleString() : value}
+                </p>
+                <div className="mt-1.5">
+                  <DeltaBadge
+                    current={typeof rawValue === "number" ? rawValue : (typeof value === "number" ? value : 0)}
+                    previous={prev}
+                  />
+                  {prev > 0 && (
+                    <span className="text-xs text-muted-foreground ml-1">vs. período anterior</span>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -501,6 +607,22 @@ export default function Reports() {
             </table>
           </div>
         </ChartCard>
+
+        {/* ── Success rate summary ── */}
+        {!isLoading && sessions.length > 0 && (
+          <div
+            className="glass-card rounded-xl p-4 flex items-center justify-between animate-fade-in"
+            style={{ border: "1px solid hsl(220 18% 18%)" }}
+          >
+            <p className="text-sm text-muted-foreground">Taxa média de sucesso nas sessões</p>
+            <span
+              className="text-lg font-bold"
+              style={{ color: avgSuccessRate >= 80 ? "hsl(152 72% 48%)" : avgSuccessRate >= 60 ? "hsl(42 96% 56%)" : "hsl(0 72% 55%)" }}
+            >
+              {avgSuccessRate}%
+            </span>
+          </div>
+        )}
       </div>
     </AppShell>
   );

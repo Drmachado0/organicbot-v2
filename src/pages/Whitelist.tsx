@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,12 +36,22 @@ interface WhitelistEntry {
   reason: string | null;
   added_at: string | null;
   ig_user_id: string;
+  ig_account_id: string | null;
+}
+
+interface IgAccount {
+  id: string;
+  ig_username: string;
 }
 
 const PAGE_SIZE = 20;
 
 export default function Whitelist() {
   const { user } = useAuth();
+
+  // accounts for filter
+  const [igAccounts, setIgAccounts] = useState<IgAccount[]>([]);
+  const [filterAccountId, setFilterAccountId] = useState<string>("all");
 
   // list state
   const [entries, setEntries] = useState<WhitelistEntry[]>([]);
@@ -63,6 +74,20 @@ export default function Whitelist() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
+  // Load IG accounts for filter
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from("ig_accounts")
+      .select("id, ig_username")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .order("created_at")
+      .then(({ data }) => {
+        setIgAccounts((data ?? []) as IgAccount[]);
+      });
+  }, [user]);
+
   // debounce search
   useEffect(() => {
     clearTimeout(debounceRef.current);
@@ -73,16 +98,25 @@ export default function Whitelist() {
     return () => clearTimeout(debounceRef.current);
   }, [search]);
 
+  // Reset page when account filter changes
+  useEffect(() => {
+    setPage(0);
+  }, [filterAccountId]);
+
   const load = useCallback(async () => {
     if (!user) return;
     setIsLoading(true);
 
     let q = supabase
       .from("whitelist")
-      .select("id, username, full_name, reason, added_at, ig_user_id", { count: "exact" })
+      .select("id, username, full_name, reason, added_at, ig_user_id, ig_account_id", { count: "exact" })
       .eq("user_id", user.id)
       .order("added_at", { ascending: false })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+    if (filterAccountId !== "all") {
+      q = q.eq("ig_account_id", filterAccountId);
+    }
 
     if (debouncedSearch.trim()) {
       q = q.ilike("username", `%${debouncedSearch.trim().replace(/^@/, "")}%`);
@@ -95,7 +129,7 @@ export default function Whitelist() {
       setTotalCount(count ?? 0);
     }
     setIsLoading(false);
-  }, [user, page, debouncedSearch]);
+  }, [user, page, debouncedSearch, filterAccountId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -116,12 +150,25 @@ export default function Whitelist() {
 
     setIsSaving(true);
     const clean = newUsername.trim().replace(/^@/, "");
-    const { error } = await supabase.from("whitelist").insert({
+
+    const insertData: {
+      user_id: string;
+      username: string;
+      ig_user_id: string;
+      reason: string | null;
+      ig_account_id?: string;
+    } = {
       user_id: user.id,
       username: clean,
       ig_user_id: `manual_${Date.now()}`,
       reason: newReason.trim() || null,
-    });
+    };
+
+    if (filterAccountId !== "all") {
+      insertData.ig_account_id = filterAccountId;
+    }
+
+    const { error } = await supabase.from("whitelist").insert(insertData);
     if (error) {
       toast.error(error.message);
     } else {
@@ -145,12 +192,15 @@ export default function Whitelist() {
     else {
       toast.success(`@${deleteTarget.username} removido`);
       setDeleteTarget(null);
-      // if last item on page, go back
       if (entries.length === 1 && page > 0) setPage((p) => p - 1);
       else load();
     }
     setIsDeleting(false);
   };
+
+  const activeAccountLabel = filterAccountId !== "all"
+    ? igAccounts.find((a) => a.id === filterAccountId)?.ig_username
+    : null;
 
   return (
     <AppShell>
@@ -163,6 +213,22 @@ export default function Whitelist() {
             <Badge variant="secondary" className="text-xs tabular-nums">{totalCount}</Badge>
           )}
         </div>
+
+        {/* Account filter — shown if multiple accounts */}
+        {igAccounts.length > 1 && (
+          <Select value={filterAccountId} onValueChange={setFilterAccountId}>
+            <SelectTrigger className="w-40 h-9 text-sm glass-card border-border/60">
+              <SelectValue placeholder="Todas as contas" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as contas</SelectItem>
+              {igAccounts.map((a) => (
+                <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         <Button
           size="sm"
           className="h-9 gap-1.5 font-semibold"
@@ -173,6 +239,25 @@ export default function Whitelist() {
           {showAdd ? "Cancelar" : "Adicionar"}
         </Button>
       </div>
+
+      {/* Account filter info strip */}
+      {activeAccountLabel && (
+        <div
+          className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg text-xs"
+          style={{ backgroundColor: "hsl(152 72% 48% / 0.08)", border: "1px solid hsl(152 72% 48% / 0.2)" }}
+        >
+          <Shield className="h-3.5 w-3.5" style={{ color: "hsl(152 72% 48%)" }} />
+          <span className="text-muted-foreground">
+            Mostrando whitelist de <span className="font-semibold text-foreground">@{activeAccountLabel}</span>
+          </span>
+          <button
+            onClick={() => setFilterAccountId("all")}
+            className="ml-auto text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* ── Add Form ── */}
       {showAdd && (
@@ -216,6 +301,14 @@ export default function Whitelist() {
               />
             </div>
           </div>
+
+          {/* Account association hint */}
+          {filterAccountId !== "all" && (
+            <p className="text-xs text-muted-foreground">
+              Será adicionado à whitelist de{" "}
+              <span className="font-semibold text-foreground">@{activeAccountLabel}</span>
+            </p>
+          )}
 
           <div className="flex justify-end gap-2">
             <Button
@@ -282,7 +375,7 @@ export default function Whitelist() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/30">
-                  {["Username", "Nome completo", "Motivo", "Adicionado em", ""].map((h) => (
+                  {["Username", "Nome completo", "Motivo", "Conta", "Adicionado em", ""].map((h) => (
                     <th
                       key={h}
                       className="text-left py-2.5 px-4 text-xs text-muted-foreground font-medium uppercase tracking-wide whitespace-nowrap"
@@ -293,46 +386,56 @@ export default function Whitelist() {
                 </tr>
               </thead>
               <tbody>
-                {entries.map((e) => (
-                  <tr
-                    key={e.id}
-                    className="border-b border-border/10 hover:bg-muted/20 transition-colors group"
-                  >
-                    <td className="py-2.5 px-4 font-semibold text-primary whitespace-nowrap">
-                      @{e.username}
-                    </td>
-                    <td className="py-2.5 px-4 text-muted-foreground">
-                      {e.full_name ?? <span className="opacity-40">—</span>}
-                    </td>
-                    <td className="py-2.5 px-4">
-                      {e.reason ? (
-                        <Badge variant="secondary" className="text-xs font-normal">
-                          {e.reason}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground/40 text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-4 text-xs text-muted-foreground whitespace-nowrap tabular-nums">
-                      {e.added_at
-                        ? new Date(e.added_at).toLocaleDateString("pt-BR", {
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                          })
-                        : "—"}
-                    </td>
-                    <td className="py-2.5 px-4 text-right">
-                      <button
-                        onClick={() => setDeleteTarget(e)}
-                        className="text-muted-foreground/40 hover:text-destructive transition-colors p-1 rounded opacity-0 group-hover:opacity-100"
-                        title="Remover"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {entries.map((e) => {
+                  const accountLabel = igAccounts.find((a) => a.id === e.ig_account_id)?.ig_username;
+                  return (
+                    <tr
+                      key={e.id}
+                      className="border-b border-border/10 hover:bg-muted/20 transition-colors group"
+                    >
+                      <td className="py-2.5 px-4 font-semibold text-primary whitespace-nowrap">
+                        @{e.username}
+                      </td>
+                      <td className="py-2.5 px-4 text-muted-foreground">
+                        {e.full_name ?? <span className="opacity-40">—</span>}
+                      </td>
+                      <td className="py-2.5 px-4">
+                        {e.reason ? (
+                          <Badge variant="secondary" className="text-xs font-normal">
+                            {e.reason}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground/40 text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-4">
+                        {accountLabel ? (
+                          <span className="text-xs text-muted-foreground">@{accountLabel}</span>
+                        ) : (
+                          <span className="text-muted-foreground/40 text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-4 text-xs text-muted-foreground whitespace-nowrap tabular-nums">
+                        {e.added_at
+                          ? new Date(e.added_at).toLocaleDateString("pt-BR", {
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                            })
+                          : "—"}
+                      </td>
+                      <td className="py-2.5 px-4 text-right">
+                        <button
+                          onClick={() => setDeleteTarget(e)}
+                          className="text-muted-foreground/40 hover:text-destructive transition-colors p-1 rounded opacity-0 group-hover:opacity-100"
+                          title="Remover"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

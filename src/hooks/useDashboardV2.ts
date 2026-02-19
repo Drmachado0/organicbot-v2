@@ -65,6 +65,14 @@ export interface WhitelistRow {
   added_at: string | null;
 }
 
+export interface BotCommand {
+  id: string;
+  command: string;
+  status: string;
+  created_at: string | null;
+  executed_at: string | null;
+}
+
 export interface DashboardData {
   accounts: DashboardAccount[];
   activeAccountId: string | null;
@@ -80,6 +88,7 @@ export interface DashboardData {
   whitelistCount: number;
   whitelistPreview: WhitelistRow[];
   automationPaused: boolean;
+  recentCommands: BotCommand[];
   isLoading: boolean;
   error: string | null;
   toggleBot: () => Promise<void>;
@@ -99,6 +108,7 @@ export function useDashboardV2(): DashboardData {
   const [whitelistCount, setWhitelistCount] = useState(0);
   const [whitelistPreview, setWhitelistPreview] = useState<WhitelistRow[]>([]);
   const [automationPaused, setAutomationPaused] = useState(false);
+  const [recentCommands, setRecentCommands] = useState<BotCommand[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,6 +134,7 @@ export function useDashboardV2(): DashboardData {
         whitelistRes,
         whitelistCountRes,
         settingsRes,
+        commandsRes,
       ] = await Promise.all([
         supabase.from("ig_accounts").select("id, ig_username, followers_count, following_count, posts_count, bot_online, bot_status, bot_mode, last_heartbeat, queue_total, queue_processed, profile_pic_url").order("created_at", { ascending: true }),
         accountId
@@ -148,6 +159,9 @@ export function useDashboardV2(): DashboardData {
         supabase.from("whitelist").select("id, username, added_at").order("added_at", { ascending: false }).limit(3),
         supabase.from("whitelist").select("id", { count: "exact", head: true }),
         supabase.from("user_settings").select("automation_paused").limit(1).maybeSingle(),
+        accountId
+          ? supabase.from("bot_commands").select("id, command, status, created_at, executed_at").eq("ig_account_id", accountId).order("created_at", { ascending: false }).limit(5)
+          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (accountsRes.data) {
@@ -201,6 +215,7 @@ export function useDashboardV2(): DashboardData {
       setWhitelistPreview((whitelistRes.data as WhitelistRow[]) || []);
       setWhitelistCount(whitelistCountRes.count || 0);
       setAutomationPaused(settingsRes.data?.automation_paused ?? false);
+      setRecentCommands((commandsRes.data as BotCommand[]) || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados");
     } finally {
@@ -225,6 +240,12 @@ export function useDashboardV2(): DashboardData {
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => fetchAll(activeAccountId), 2000);
       })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "bot_commands", filter: `ig_account_id=eq.${activeAccountId}` }, (payload) => {
+        const updated = payload.new as BotCommand;
+        setRecentCommands((prev) =>
+          prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c))
+        );
+      })
       .subscribe();
 
     return () => {
@@ -233,14 +254,45 @@ export function useDashboardV2(): DashboardData {
   }, [activeAccountId, fetchAll]);
 
   const toggleBot = useCallback(async () => {
+    if (!activeAccountId) return;
     try {
       const newPaused = !automationPaused;
-      await supabase.from("user_settings").upsert({ user_id: (await supabase.auth.getUser()).data.user?.id ?? "", automation_paused: newPaused, automation_paused_at: newPaused ? new Date().toISOString() : null }, { onConflict: "user_id" });
+      const command = newPaused ? "pause" : "start";
+
+      // Send real bot command via RPC
+      const { error: cmdError } = await supabase.rpc("send_bot_command", {
+        p_ig_account_id: activeAccountId,
+        p_command: command,
+        p_params: {},
+      });
+      if (cmdError) throw cmdError;
+
+      // Also update automation_paused flag as fallback state
+      await supabase
+        .from("user_settings")
+        .upsert(
+          {
+            user_id: (await supabase.auth.getUser()).data.user?.id ?? "",
+            automation_paused: newPaused,
+            automation_paused_at: newPaused ? new Date().toISOString() : null,
+          },
+          { onConflict: "user_id" }
+        );
+
       setAutomationPaused(newPaused);
+
+      // Refresh commands list
+      const { data } = await supabase
+        .from("bot_commands")
+        .select("id, command, status, created_at, executed_at")
+        .eq("ig_account_id", activeAccountId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (data) setRecentCommands(data as BotCommand[]);
     } catch {
-      // silently fail
+      // silently fail — caller shows toast
     }
-  }, [automationPaused]);
+  }, [automationPaused, activeAccountId]);
 
   const refresh = useCallback(() => {
     refreshCountRef.current++;
@@ -264,6 +316,7 @@ export function useDashboardV2(): DashboardData {
     whitelistCount,
     whitelistPreview,
     automationPaused,
+    recentCommands,
     isLoading,
     error,
     toggleBot,
