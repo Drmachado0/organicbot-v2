@@ -42,6 +42,7 @@ const statusConfig = {
 };
 
 const ZIP_URL = "https://github.com/Drmachado0/extensao/archive/refs/heads/main.zip";
+const DASHBOARD_URL = "https://organicbot.lovable.app";
 
 const steps = [
   {
@@ -76,7 +77,7 @@ const steps = [
     num: 5,
     icon: <LogIn className="h-5 w-5" />,
     title: "Conectar ao Dashboard",
-    desc: "Clique no ícone da extensão no Chrome, faça login com o mesmo email e senha do dashboard.",
+    desc: `Clique no ícone da extensão no Chrome, faça login com o mesmo email e senha do dashboard (${DASHBOARD_URL}).`,
     color: "hsl(320 65% 60%)",
   },
 ];
@@ -232,7 +233,26 @@ export default function ExtensionPage() {
           </Button>
         </div>
 
-        {/* ── Installation Steps ── */}
+        {/* ── URL Warning ── */}
+        <div
+          className="rounded-2xl p-4 flex items-start gap-3"
+          style={{ backgroundColor: "hsl(42 96% 56% / 0.08)", border: "1px solid hsl(42 96% 56% / 0.3)" }}
+        >
+          <Zap className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: "hsl(42 96% 56%)" }} />
+          <div className="space-y-1 min-w-0">
+            <p className="text-sm font-semibold" style={{ color: "hsl(42 96% 56%)" }}>URL do Dashboard Atualizada</p>
+            <p className="text-xs text-muted-foreground">
+              O arquivo <code className="bg-muted/40 px-1 rounded">lovable-config.js</code> da extensão pode conter a URL antiga{" "}
+              <code className="bg-muted/40 px-1 rounded">organicpublic.lovable.app</code>. A URL correta é:
+            </p>
+            <p className="text-xs font-mono font-semibold" style={{ color: "hsl(152 72% 48%)" }}>{DASHBOARD_URL}</p>
+            <p className="text-xs text-muted-foreground/70">
+              Use esta URL ao fazer login na extensão. Se o botão "Abrir Dashboard" abrir a URL errada, acesse diretamente pelo navegador.
+            </p>
+          </div>
+        </div>
+
+
         <div className="glass-card rounded-2xl p-5 space-y-5">
           <div className="flex items-center gap-2">
             <Puzzle className="h-4 w-4 text-muted-foreground" />
