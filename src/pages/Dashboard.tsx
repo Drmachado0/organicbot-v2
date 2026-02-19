@@ -9,6 +9,7 @@ import { RecentActionsTable } from "@/components/dashboard/RecentActionsTable";
 import { CampaignsCard } from "@/components/dashboard/CampaignsCard";
 import { HealthAlertsCard } from "@/components/dashboard/HealthAlertsCard";
 import { WhitelistCard } from "@/components/dashboard/WhitelistCard";
+import { AccountCardsPanel } from "@/components/dashboard/AccountCardsPanel";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { toast } from "sonner";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
 import {
   Play,
   Pause,
@@ -35,6 +37,7 @@ import {
 export default function Dashboard() {
   const [searchParams] = useSearchParams();
   const [stopConfirm, setStopConfirm] = useState(false);
+  const { user } = useAuth();
   const {
     accounts,
     activeAccountId,
@@ -212,6 +215,14 @@ export default function Dashboard() {
           )}
         </header>
 
+        {/* ── Account Cards Panel (multi-account) ── */}
+        <AccountCardsPanel
+          accounts={accounts}
+          activeAccountId={activeAccountId}
+          isLoading={isLoading}
+          onSelect={setActiveAccountId}
+          userId={user?.id ?? null}
+        />
 
         {/* ── Live Status Bar ── */}
         <LiveStatusBar account={account} />
