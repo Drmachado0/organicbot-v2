@@ -53,14 +53,28 @@ export function AppSidebar() {
 
   useEffect(() => {
     if (!user) return;
+
+    // Initial fetch
     supabase
       .from("profiles")
       .select("full_name, email, avatar_url")
       .eq("id", user.id)
       .maybeSingle()
-      .then(({ data }) => {
-        if (data) setProfile(data as Profile);
-      });
+      .then(({ data }) => { if (data) setProfile(data as Profile); });
+
+    // Realtime subscription for profile changes
+    const channel = supabase
+      .channel(`sidebar-profile-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${user.id}` },
+        (payload) => {
+          setProfile((prev) => ({ ...prev, ...(payload.new as Profile) }));
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [user]);
 
   const handleLogout = async () => {
