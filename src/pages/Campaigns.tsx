@@ -384,8 +384,9 @@ export default function Campaigns() {
 
   return (
     <AppShell>
+      <div className="space-y-6">
       {/* Page header */}
-      <div className="flex items-center justify-between mb-6 animate-fade-in">
+      <div className="flex items-center justify-between animate-fade-in">
         <div className="flex items-center gap-2">
           <Target className="h-5 w-5" style={{ color: "hsl(152 72% 48%)" }} />
           <h1 className="text-xl font-bold tracking-tight">Campanhas de Targeting</h1>
@@ -591,6 +592,11 @@ export default function Campaigns() {
           )}
         </div>
       )}
+
+      {/* ── Target Queue Panel ── */}
+      {user && <TargetQueuePanel userId={user.id} />}
+
+      </div>
     </AppShell>
   );
 }

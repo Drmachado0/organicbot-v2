@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { CheckCircle, AlertTriangle, Bell, Shield, XCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,21 +30,38 @@ const LEVEL_CONFIG = {
 export function HealthAlertsCard({ todayActions, pendingQueueCount, botOnline, isLoading, igAccountId, lastHeartbeat }: Props) {
   const [errorRate, setErrorRate] = useState<number | null>(null);
 
+  const fetchErrorRate = useCallback(async () => {
+    if (!igAccountId) return;
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data } = await supabase
+      .from("action_log")
+      .select("status")
+      .eq("ig_account_id", igAccountId)
+      .gte("executed_at", since)
+      .limit(200);
+    if (!data || data.length === 0) { setErrorRate(null); return; }
+    const failed = data.filter((r) => r.status === "failed").length;
+    setErrorRate(Math.round((failed / data.length) * 100));
+  }, [igAccountId]);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchErrorRate();
+  }, [fetchErrorRate]);
+
+  // Realtime subscription — atualiza taxa de erro ao receber novos action_logs
   useEffect(() => {
     if (!igAccountId) return;
-    (async () => {
-      const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      const { data } = await supabase
-        .from("action_log")
-        .select("status")
-        .eq("ig_account_id", igAccountId)
-        .gte("executed_at", since)
-        .limit(200);
-      if (!data || data.length === 0) { setErrorRate(null); return; }
-      const failed = data.filter((r) => r.status === "failed").length;
-      setErrorRate(Math.round((failed / data.length) * 100));
-    })();
-  }, [igAccountId]);
+    const channel = supabase
+      .channel(`health-alerts-${igAccountId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "action_log", filter: `ig_account_id=eq.${igAccountId}` },
+        () => { fetchErrorRate(); }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [igAccountId, fetchErrorRate]);
 
   if (isLoading) {
     return (
