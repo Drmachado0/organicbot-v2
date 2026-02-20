@@ -1,53 +1,38 @@
 
-# Puxar Imagem do Perfil Instagram
+# Revisao e Ajustes
 
-## Problema
-O campo `profile_pic_url` esta `null` para todas as contas no banco de dados. O codigo ja exibe a foto quando o campo tem valor (ja implementado em Queue.tsx e AccountCardsPanel.tsx), mas nenhum mecanismo popula esse campo.
+## Problemas Encontrados
 
-## Solucao
-Adicionar um botao "Atualizar Foto" que envia o comando `update_profile_pic` para a extensao via RPC `send_bot_command`, e tambem adicionar uma opcao de buscar a foto diretamente via a API publica do Instagram (endpoint `/{username}/?__a=1` ou proxy) como fallback.
+### 1. Realtime do Dashboard nao atualiza `profile_pic_url`
+No `useDashboardV2.ts` (linha 312), a subscription de realtime para `ig_accounts` so sincroniza `queue_total`, `queue_processed`, `bot_online` e `bot_status`. Quando a extensao atualiza `profile_pic_url`, `followers_count`, `following_count` ou `bot_mode`, o Dashboard nao reflete a mudanca em tempo real.
 
-### Abordagem em 2 frentes:
+**Correcao**: Adicionar `profile_pic_url`, `followers_count`, `following_count`, `bot_mode`, `last_heartbeat` ao merge do realtime.
 
-**1. Comando para a extensao (principal)**
-- Adicionar botao "Atualizar Foto" no card de perfil da pagina Queue (ao lado de "Re-detectar")
-- O botao envia o comando `update_profile_pic` via `send_bot_command`
-- A extensao (fora deste codigo) deve processar esse comando e fazer `UPDATE ig_accounts SET profile_pic_url = '...' WHERE id = '...'`
+### 2. Closure stale de `campaignNames` no Queue.tsx
+Na funcao `loadQueue` (linha 243), o codigo usa `campaignNames` do state para enriquecer as rows, mas o `setCampaignNames` acabou de ser chamado na linha 235. Como o state ainda nao atualizou naquele render, os nomes de campanha ficam vazios na primeira carga.
 
-**2. Fallback via Supabase Edge Function**
-- Criar uma edge function `fetch-profile-pic` que usa a API publica do Instagram para buscar a foto de perfil
-- Endpoint: `https://www.instagram.com/api/v1/users/web_profile_info/?username={username}`
-- Salva a URL retornada no campo `profile_pic_url` da tabela `ig_accounts`
-- Botao "Buscar foto" como alternativa caso a extensao nao suporte o comando
+**Correcao**: Usar a variavel local `names` diretamente ao inves do state `campaignNames` para enriquecer as rows.
 
-### Alteracoes nos arquivos:
+### 3. `loadQueue` nao inclui `campaignNames` na dependency array
+O `useCallback` do `loadQueue` (linha 248) depende de `campaignNames` implicitamente mas nao o lista como dependencia. Apos corrigir o item 2 (usar variavel local), essa dependencia deixa de existir.
 
-**`src/pages/Queue.tsx`**
-- Adicionar botao "Atualizar Foto" ao lado de "Re-detectar" no card de perfil
-- O botao envia `update_profile_pic` via `sendCmd`
+### 4. Edge Function `fetch-profile-pic` sem autenticacao
+A funcao esta com `verify_jwt = false`, permitindo que qualquer pessoa chame e atualize fotos de qualquer conta. Deveria validar o JWT e verificar que o usuario e dono da conta.
 
-**`src/pages/Dashboard.tsx`** (KPI card "Status da Conta")
-- Incluir avatar do `account.profile_pic_url` no KPI card que mostra `@username`
+**Correcao**: Mudar para `verify_jwt = true` no config.toml e adicionar validacao de ownership na edge function.
 
-**`supabase/functions/fetch-profile-pic/index.ts`** (nova edge function)
-- Recebe `ig_account_id` e `username`
-- Tenta buscar foto via API publica do Instagram
-- Atualiza `ig_accounts.profile_pic_url`
+---
 
-### Detalhes tecnicos
+## Alteracoes
 
-```text
-Fluxo do botao:
-[Botao "Atualizar Foto"] 
-     |
-     +--> sendCmd("update_profile_pic") --> extensao busca e salva no DB
-     |
-     +--> (fallback) fetch edge function --> API Instagram --> UPDATE ig_accounts
-     |
-     v
-[Realtime subscription atualiza UI automaticamente]
-```
+### `src/hooks/useDashboardV2.ts`
+- Linha 312: expandir o merge do realtime para incluir todos os campos relevantes (`profile_pic_url`, `followers_count`, `following_count`, `bot_mode`, `last_heartbeat`)
 
-A UI ja tem realtime subscription no `AccountCardsPanel` (linha 47-83) que observa mudancas em `ig_accounts`, entao quando o `profile_pic_url` for atualizado no banco, a foto aparecera automaticamente sem reload.
+### `src/pages/Queue.tsx`
+- Linhas 240-248: Corrigir `loadQueue` para usar a variavel local dos nomes de campanha ao inves do state (que pode estar stale)
 
-**Nota**: A abordagem via API publica do Instagram pode ser bloqueada por rate-limiting. A via extensao e mais confiavel pois a extensao ja esta autenticada no Instagram.
+### `supabase/functions/fetch-profile-pic/index.ts`
+- Adicionar validacao de JWT e ownership (verificar que o usuario autenticado e dono da `ig_account`)
+
+### `supabase/config.toml`
+- Alterar `verify_jwt` do `fetch-profile-pic` para `true`
