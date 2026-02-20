@@ -1,38 +1,34 @@
 
-# Revisao e Ajustes
+# Corrigir "Atualizar Foto" - Usar Edge Function Diretamente
 
-## Problemas Encontrados
+## Problema
+A extensao nao reconhece o comando `update_profile_pic` (retorna "Comando desconhecido"). O botao atual envia o comando via `send_bot_command`, que depende da extensao processar -- mas ela nao suporta esse comando.
 
-### 1. Realtime do Dashboard nao atualiza `profile_pic_url`
-No `useDashboardV2.ts` (linha 312), a subscription de realtime para `ig_accounts` so sincroniza `queue_total`, `queue_processed`, `bot_online` e `bot_status`. Quando a extensao atualiza `profile_pic_url`, `followers_count`, `following_count` ou `bot_mode`, o Dashboard nao reflete a mudanca em tempo real.
-
-**Correcao**: Adicionar `profile_pic_url`, `followers_count`, `following_count`, `bot_mode`, `last_heartbeat` ao merge do realtime.
-
-### 2. Closure stale de `campaignNames` no Queue.tsx
-Na funcao `loadQueue` (linha 243), o codigo usa `campaignNames` do state para enriquecer as rows, mas o `setCampaignNames` acabou de ser chamado na linha 235. Como o state ainda nao atualizou naquele render, os nomes de campanha ficam vazios na primeira carga.
-
-**Correcao**: Usar a variavel local `names` diretamente ao inves do state `campaignNames` para enriquecer as rows.
-
-### 3. `loadQueue` nao inclui `campaignNames` na dependency array
-O `useCallback` do `loadQueue` (linha 248) depende de `campaignNames` implicitamente mas nao o lista como dependencia. Apos corrigir o item 2 (usar variavel local), essa dependencia deixa de existir.
-
-### 4. Edge Function `fetch-profile-pic` sem autenticacao
-A funcao esta com `verify_jwt = false`, permitindo que qualquer pessoa chame e atualize fotos de qualquer conta. Deveria validar o JWT e verificar que o usuario e dono da conta.
-
-**Correcao**: Mudar para `verify_jwt = true` no config.toml e adicionar validacao de ownership na edge function.
-
----
+## Solucao
+Alterar o botao "Atualizar Foto" para chamar diretamente a edge function `fetch-profile-pic` ao inves de enviar um comando para a extensao. A edge function ja existe e funciona: busca a foto via API publica do Instagram e atualiza o banco.
 
 ## Alteracoes
 
-### `src/hooks/useDashboardV2.ts`
-- Linha 312: expandir o merge do realtime para incluir todos os campos relevantes (`profile_pic_url`, `followers_count`, `following_count`, `bot_mode`, `last_heartbeat`)
-
 ### `src/pages/Queue.tsx`
-- Linhas 240-248: Corrigir `loadQueue` para usar a variavel local dos nomes de campanha ao inves do state (que pode estar stale)
+- Criar uma funcao `fetchProfilePic` que chama `supabase.functions.invoke("fetch-profile-pic", { body: { ig_account_id, username } })`
+- Alterar o botao "Atualizar Foto" (linha 674) para chamar `fetchProfilePic` ao inves de `sendCmd("update_profile_pic")`
+- Tratar erro/sucesso com toast
+- O realtime ja cuidara de atualizar a foto na UI quando o banco for atualizado
 
-### `supabase/functions/fetch-profile-pic/index.ts`
-- Adicionar validacao de JWT e ownership (verificar que o usuario autenticado e dono da `ig_account`)
+### Detalhes Tecnicos
 
-### `supabase/config.toml`
-- Alterar `verify_jwt` do `fetch-profile-pic` para `true`
+```text
+Fluxo corrigido:
+[Botao "Atualizar Foto"]
+     |
+     v
+supabase.functions.invoke("fetch-profile-pic", { ig_account_id, username })
+     |
+     v
+Edge Function busca foto via API Instagram --> UPDATE ig_accounts
+     |
+     v
+Realtime subscription atualiza UI automaticamente
+```
+
+A funcao `fetchProfilePic` usara o `accountId` e `selectedAccount.ig_username` ja disponiveis no componente. O loading state pode reutilizar `loadingCmd` com valor `"update_profile_pic"` para manter consistencia visual.
