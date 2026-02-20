@@ -386,7 +386,25 @@ export default function QueuePage() {
     }
   };
 
-  // ── Export ───────────────────────────────────────────────────────────────
+  // ── Atualizar Foto (via Edge Function) ──────────────────────────────────
+  const handleUpdateProfilePic = async () => {
+    if (!accountId || !account?.ig_username) return;
+    setLoadingCmd("update_profile_pic");
+    try {
+      const { data, error } = await supabase.functions.invoke("fetch-profile-pic", {
+        body: { ig_account_id: accountId, username: account.ig_username },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      toast({ title: "Foto atualizada!", description: "A foto de perfil foi atualizada com sucesso." });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Falha ao atualizar foto.";
+      toast({ title: "Erro", description: msg, variant: "destructive" });
+    } finally {
+      setLoadingCmd(null);
+    }
+  };
+
 
   const exportJSON = () => {
     downloadFile(JSON.stringify(filteredPendingRows, null, 2), "queue.json", "application/json");
@@ -671,7 +689,7 @@ export default function QueuePage() {
                   <RefreshCw className={cn("w-3 h-3", loadingCmd === "sync_settings" && "animate-spin")} />
                   Re-detectar
                 </Button>
-                <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => sendCmd("update_profile_pic")} disabled={loadingCmd === "update_profile_pic"}>
+                <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={handleUpdateProfilePic} disabled={loadingCmd === "update_profile_pic"}>
                   <RefreshCw className={cn("w-3 h-3", loadingCmd === "update_profile_pic" && "animate-spin")} />
                   Atualizar Foto
                 </Button>
