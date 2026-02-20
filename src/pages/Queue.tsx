@@ -370,6 +370,32 @@ export default function QueuePage() {
   // Store parsed JSON items with details for import
   const importJsonItemsRef = useRef<Record<string, Record<string, unknown>>>({});
 
+  // Smart parser: tries JSON first (works for .txt/.csv/.json), falls back to text
+  const parseFileContent = (text: string): string => {
+    try {
+      const parsed = JSON.parse(text);
+      const usernames: string[] = [];
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item: any) => {
+          const uname = typeof item === "string" ? item : item?.username;
+          if (uname) {
+            usernames.push(uname);
+            if (typeof item === "object") {
+              const { username, ...rest } = item;
+              importJsonItemsRef.current[uname] = rest;
+            }
+          }
+        });
+      } else if (typeof parsed === "object" && parsed !== null) {
+        usernames.push(...Object.keys(parsed));
+      }
+      if (usernames.length > 0) return usernames.join("\n");
+    } catch {
+      // Not JSON — fall through to text parsing
+    }
+    return text;
+  };
+
   const handleImport = async () => {
     const usernames = importText.split("\n").map((u) => u.trim().replace(/^@/, "")).filter(Boolean);
     if (!usernames.length || !accountId) return;
@@ -1097,36 +1123,13 @@ export default function QueuePage() {
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-                const file = e.dataTransfer.files[0];
+              const file = e.dataTransfer.files[0];
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                   const text = ev.target?.result as string;
-                  if (file.name.endsWith(".json")) {
-                    try {
-                      const parsed = JSON.parse(text);
-                      const usernames: string[] = [];
-                      if (Array.isArray(parsed)) {
-                        parsed.forEach((item: any) => {
-                          const uname = typeof item === "string" ? item : item?.username;
-                          if (uname) {
-                            usernames.push(uname);
-                            if (typeof item === "object") {
-                              const { username, ...rest } = item;
-                              importJsonItemsRef.current[uname] = rest;
-                            }
-                          }
-                        });
-                      } else {
-                        usernames.push(...Object.keys(parsed));
-                      }
-                      setImportText((prev) => [prev, usernames.join("\n")].filter(Boolean).join("\n"));
-                    } catch {
-                      setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
-                    }
-                  } else {
-                    setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
-                  }
+                  const result = parseFileContent(text);
+                  setImportText((prev) => [prev, result].filter(Boolean).join("\n"));
                 };
                 reader.readAsText(file);
               }}
@@ -1141,31 +1144,8 @@ export default function QueuePage() {
                   const reader = new FileReader();
                   reader.onload = (ev) => {
                     const text = ev.target?.result as string;
-                    if (file.name.endsWith(".json")) {
-                      try {
-                        const parsed = JSON.parse(text);
-                        const usernames: string[] = [];
-                        if (Array.isArray(parsed)) {
-                          parsed.forEach((item: any) => {
-                            const uname = typeof item === "string" ? item : item?.username;
-                            if (uname) {
-                              usernames.push(uname);
-                              if (typeof item === "object") {
-                                const { username, ...rest } = item;
-                                importJsonItemsRef.current[uname] = rest;
-                              }
-                            }
-                          });
-                        } else {
-                          usernames.push(...Object.keys(parsed));
-                        }
-                        setImportText((prev) => [prev, usernames.join("\n")].filter(Boolean).join("\n"));
-                      } catch {
-                        setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
-                      }
-                    } else {
-                      setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
-                    }
+                    const result = parseFileContent(text);
+                    setImportText((prev) => [prev, result].filter(Boolean).join("\n"));
                   };
                   reader.readAsText(file);
                   e.target.value = "";
