@@ -1,83 +1,61 @@
 
-# Adicionar Filtros "TIPO DE CONTA" na Seção de Filtros
 
-## Objetivo
+# Remover Dados Ficticios do Dashboard
 
-Replicar a seção "TIPO DE CONTA" do IG List Collector na area de filtros colapsavel da aba Coletor, com checkboxes para filtrar targets na fila com base nas propriedades do perfil armazenadas na coluna `details` (JSON) da `target_queue`.
+## Problema
+
+O componente `LiveStatusBar` exibe dois dados inventados que nao vem da extensao:
+
+1. **Countdown falso** ("Proxima acao em 47s") -- um timer que decrementa localmente e reseta com valor aleatorio, sem nenhuma relacao com a extensao real
+2. **Duracao de sessao falsa** ("Rodando ha Xm Xs") -- um contador que incrementa a partir de zero toda vez que a pagina carrega, sem usar dados reais de sessao
+
+Todos os outros componentes do dashboard (KPI cards, graficos, tabelas de sessoes, log de acoes, campanhas, whitelist, alertas de saude) ja usam exclusivamente dados reais vindos do Supabase.
 
 ---
 
 ## O que muda
 
-### Arquivo: `src/pages/Queue.tsx`
+### Arquivo: `src/components/dashboard/LiveStatusBar.tsx`
 
-1. **Importar `Checkbox`** do `@/components/ui/checkbox`
+1. **Remover o countdown ficticio** -- eliminar o estado `countdown` e o bloco "Proxima acao em Xs". Nao existe dado real da extensao para esse timer, entao ele sera removido completamente.
 
-2. **Novos estados para os filtros de tipo de conta:**
-   - `removePrivate` (boolean) - Remover contas privadas
-   - `removePublic` (boolean) - Remover contas publicas
-   - `removeVerified` (boolean) - Remover verificadas
-   - `removeUnverified` (boolean) - Remover nao-verificadas
-   - `removeNoPhoto` (boolean) - Remover sem foto de perfil
-   - `removeDuplicates` (boolean, default: true) - Remover duplicadas
+2. **Substituir sessao ficticia por dados reais** -- em vez de incrementar `sessionMs` localmente, usar o campo `last_heartbeat` da conta para calcular ha quanto tempo o bot esta online. Exibir "Ultimo heartbeat ha Xm" com o tempo real, ou esconder se o bot estiver offline.
 
-3. **Adicionar seção "TIPO DE CONTA" dentro do `CollapsibleContent` dos FILTROS**, antes dos filtros de Fonte e Status existentes. Layout:
-   - Titulo "TIPO DE CONTA" em uppercase
-   - 6 checkboxes com labels, usando o componente `Checkbox` do Radix UI
-   - Visual escuro com bordas sutis, seguindo o padrao da extensao
+3. **Remover os estados `countdown` e `sessionMs`** e o `useEffect` com `setInterval` que os alimentava.
 
-4. **Aplicar filtros client-side** na lista `pendingRows` e na contagem. Os filtros atuam sobre o campo `details` (JSON) de cada `TargetRow`:
-   - `is_private === true` -> removido se `removePrivate` ativo
-   - `is_private === false` -> removido se `removePublic` ativo
-   - `is_verified === true` -> removido se `removeVerified` ativo
-   - `is_verified === false` -> removido se `removeUnverified` ativo
-   - `profile_pic_url` vazio/default -> removido se `removeNoPhoto` ativo
-   - Duplicatas por username -> removido se `removeDuplicates` ativo
+### Resultado visual
 
-5. **Atualizar `TargetRow` interface** para incluir `details` (JSON) e **atualizar o `loadQueue` select** para incluir `details`
-
-6. **Atualizar a logica de importacao JSON** para salvar os metadados do perfil (`is_private`, `is_verified`, `profile_pic_url`, `full_name`, `id`) na coluna `details` ao importar arquivos no formato do IG List Collector
+A barra de status ficara com:
+- Indicador Online/Offline (real, via `bot_online`)
+- Modo atual (real, via `bot_mode`)
+- Tempo desde ultimo heartbeat (real, via `last_heartbeat`)
+- Badge de status da extensao (ja real)
+- Username da conta (ja real)
 
 ---
 
 ## Detalhes Tecnicos
 
-### Estrutura do `details` JSON (vindo do IG List Collector)
+O calculo do tempo de heartbeat usara `last_heartbeat` com refresh a cada 10 segundos para manter o label atualizado:
+
 ```typescript
-{
-  is_private: boolean;
-  is_verified: boolean;
-  profile_pic_url: string;
-  full_name: string;
-  id: string;
-  followed_by_viewer: boolean;
+// Tick every 10s to update heartbeat label
+const [tick, setTick] = useState(0);
+useEffect(() => {
+  const id = setInterval(() => setTick(t => t + 1), 10_000);
+  return () => clearInterval(id);
+}, []);
+
+const heartbeatAge = account?.last_heartbeat
+  ? Math.floor((Date.now() - new Date(account.last_heartbeat).getTime()) / 1000)
+  : null;
+
+function formatHeartbeatAge(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 ```
 
-### Funcao de filtro aplicada aos rows
-```typescript
-function applyAccountFilters(rows: TargetRow[]): TargetRow[] {
-  let filtered = rows;
-  if (removeDuplicates) {
-    const seen = new Set<string>();
-    filtered = filtered.filter(r => {
-      const key = r.username.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-  if (removePrivate) filtered = filtered.filter(r => !(r.details as any)?.is_private);
-  if (removePublic) filtered = filtered.filter(r => (r.details as any)?.is_private !== false);
-  if (removeVerified) filtered = filtered.filter(r => !(r.details as any)?.is_verified);
-  if (removeUnverified) filtered = filtered.filter(r => (r.details as any)?.is_verified !== false);
-  if (removeNoPhoto) filtered = filtered.filter(r => {
-    const url = (r.details as any)?.profile_pic_url ?? "";
-    return url && !url.includes("default");
-  });
-  return filtered;
-}
-```
+A secao "Proxima acao" sera completamente removida pois nao existe campo correspondente no banco de dados. A secao de duracao de sessao sera substituida por "Heartbeat ha X" usando dados reais.
 
-### Importacao JSON atualizada
-Ao importar um arquivo `.json` no formato do IG List Collector, alem de extrair o `username`, salvar o objeto inteiro como `details` na chamada RPC ou insert, permitindo que os filtros funcionem imediatamente apos a importacao.
