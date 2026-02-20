@@ -152,7 +152,8 @@ function InjectModal({ campaign, userId, onClose, onInjected }: InjectModalProps
         p_ig_account_id: selectedId,
         p_usernames: campaign.competitors,
         p_source: "campaign",
-      });
+        p_campaign_id: campaign.id,
+      } as any);
       if (error) throw error;
       const added = typeof data === "number" ? data : 0;
       const skipped = totalTargets - added;

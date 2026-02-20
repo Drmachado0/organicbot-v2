@@ -391,6 +391,7 @@ export type Database = {
       }
       target_queue: {
         Row: {
+          campaign_id: string | null
           created_at: string | null
           details: Json | null
           device_id: string | null
@@ -403,6 +404,7 @@ export type Database = {
           username: string
         }
         Insert: {
+          campaign_id?: string | null
           created_at?: string | null
           details?: Json | null
           device_id?: string | null
@@ -415,6 +417,7 @@ export type Database = {
           username: string
         }
         Update: {
+          campaign_id?: string | null
           created_at?: string | null
           details?: Json | null
           device_id?: string | null
@@ -427,6 +430,13 @@ export type Database = {
           username?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "target_queue_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "targeting_campaigns"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "target_queue_ig_account_id_fkey"
             columns: ["ig_account_id"]
@@ -582,14 +592,24 @@ export type Database = {
       }
     }
     Functions: {
-      add_targets_batch: {
-        Args: {
-          p_ig_account_id: string
-          p_source?: string
-          p_usernames: string[]
-        }
-        Returns: number
-      }
+      add_targets_batch:
+        | {
+            Args: {
+              p_ig_account_id: string
+              p_source?: string
+              p_usernames: string[]
+            }
+            Returns: number
+          }
+        | {
+            Args: {
+              p_campaign_id?: string
+              p_ig_account_id: string
+              p_source?: string
+              p_usernames: string[]
+            }
+            Returns: number
+          }
       auto_provision_ig_account: {
         Args: { p_device_id: string; p_ig_username: string }
         Returns: string
@@ -599,9 +619,22 @@ export type Database = {
         Args: { p_ig_account_id: string; p_status?: string }
         Returns: number
       }
+      fetch_next_targets: {
+        Args: { p_ig_account_id: string; p_limit?: number }
+        Returns: {
+          campaign_id: string
+          campaign_name: string
+          campaign_niche: string
+          id: string
+          priority: number
+          source: string
+          username: string
+        }[]
+      }
       fetch_pending_targets: {
         Args: { p_ig_account_id: string; p_limit?: number }
         Returns: {
+          campaign_id: string | null
           created_at: string | null
           details: Json | null
           device_id: string | null
@@ -635,6 +668,10 @@ export type Database = {
           action_type: string
           count: number
         }[]
+      }
+      mark_targets_done: {
+        Args: { p_ig_account_id: string; p_target_ids: string[] }
+        Returns: number
       }
       remove_duplicate_targets: {
         Args: { p_ig_account_id: string }
