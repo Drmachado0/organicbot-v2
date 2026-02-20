@@ -950,10 +950,11 @@ export default function BotSettings() {
     try {
       const botSchedule = weekScheduleToBotSchedule(settings.week_schedule);
 
-      // 1. Save to user_settings (all settings)
+      // 1. Save to user_settings (all settings + dashboard_url)
+      const settingsWithUrl = { ...settings, dashboard_url: "https://organicbot.lovable.app" };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error: settingsError } = await supabase.from("user_settings").upsert(
-        [{ user_id: user.id, settings_json: settings as unknown as import("@/integrations/supabase/types").Json, updated_at: new Date().toISOString() }],
+        [{ user_id: user.id, settings_json: settingsWithUrl as unknown as import("@/integrations/supabase/types").Json, updated_at: new Date().toISOString() }],
         { onConflict: "user_id" }
       );
       if (settingsError) throw settingsError;
@@ -1087,7 +1088,7 @@ export default function BotSettings() {
                         .limit(1)
                         .maybeSingle();
                       const currentJson = (currentSettings?.settings_json as Record<string, unknown>) || {};
-                      const mergedJson = { ...currentJson, ...presetValues };
+                      const mergedJson = { ...currentJson, ...presetValues, dashboard_url: "https://organicbot.lovable.app" };
 
                       // 3. Upsert user_settings with merged JSON
                       await supabase.from("user_settings").upsert(
