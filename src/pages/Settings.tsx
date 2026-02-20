@@ -1066,29 +1066,70 @@ export default function BotSettings() {
                 <button
                   key={p.id}
                   onClick={async () => {
-                    setSettings((prev) => ({
-                      ...prev,
+                    const presetValues = {
                       delay_min: p.delayMin,
                       delay_max: p.delayMax,
                       follow_daily_limit: p.follows,
                       unfollow_daily_limit: p.unfollows,
                       like_daily_limit: p.likes,
                       max_actions_per_session: p.session,
-                    }));
-                    setIsDirty(true);
-                    // Send immediate command to extension
-                    const { data: accs } = await supabase.from("ig_accounts").select("id").eq("user_id", user?.id ?? "").eq("is_active", true);
-                    if (accs && accs.length > 0) {
-                      for (const acc of accs) {
-                        await supabase.rpc("send_bot_command", {
-                          p_ig_account_id: acc.id,
-                          p_command: "set_safety_preset",
-                          p_params: { preset: p.id, delay_min: p.delayMin, delay_max: p.delayMax },
-                        });
+                    };
+                    // 1. Update local UI
+                    setSettings((prev) => ({ ...prev, ...presetValues }));
+                    setIsDirty(false);
+
+                    try {
+                      // 2. Fetch current settings_json and merge
+                      const { data: currentSettings } = await supabase
+                        .from("user_settings")
+                        .select("settings_json")
+                        .eq("user_id", user?.id ?? "")
+                        .limit(1)
+                        .maybeSingle();
+                      const currentJson = (currentSettings?.settings_json as Record<string, unknown>) || {};
+                      const mergedJson = { ...currentJson, ...presetValues };
+
+                      // 3. Upsert user_settings with merged JSON
+                      await supabase.from("user_settings").upsert(
+                        { user_id: user?.id ?? "", settings_json: mergedJson, updated_at: new Date().toISOString() },
+                        { onConflict: "user_id" }
+                      );
+
+                      // 4. Update ig_accounts with fields the extension reads directly
+                      const { data: accs } = await supabase
+                        .from("ig_accounts")
+                        .select("id")
+                        .eq("user_id", user?.id ?? "")
+                        .eq("is_active", true);
+
+                      if (accs && accs.length > 0) {
+                        await Promise.all(
+                          accs.map((acc) =>
+                            supabase.from("ig_accounts").update({
+                              delay_min: p.delayMin,
+                              delay_max: p.delayMax,
+                              max_actions_per_session: p.session,
+                              likes_per_follow: settings.likes_per_follow ?? 2,
+                            }).eq("id", acc.id)
+                          )
+                        );
+
+                        // 5. Send sync_settings to all active accounts
+                        await Promise.allSettled(
+                          accs.map((acc) =>
+                            supabase.rpc("send_bot_command", {
+                              p_ig_account_id: acc.id,
+                              p_command: "sync_settings",
+                              p_params: {},
+                            })
+                          )
+                        );
+                        toast.success(`Preset "${p.id}" salvo e sincronizado!`);
+                      } else {
+                        toast.success(`Preset "${p.id}" salvo!`);
                       }
-                      toast.success(`Preset "${p.id}" aplicado e enviado à extensão!`);
-                    } else {
-                      toast.info(`Preset "${p.id}" aplicado. Salve para sincronizar.`);
+                    } catch {
+                      toast.error("Erro ao salvar preset.");
                     }
                   }}
                   className="rounded-xl px-4 py-4 text-left space-y-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
