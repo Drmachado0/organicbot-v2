@@ -33,10 +33,10 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { to: "/dashboard",  icon: LayoutDashboard, label: "Dashboard"      },
   { to: "/campaigns",  icon: Target,          label: "Campanhas"      },
+  { to: "/queue",      icon: ListOrdered,      label: "Fila de Targets" },
   { to: "/reports",    icon: BarChart2,        label: "Relatórios"    },
   { to: "/whitelist",  icon: Shield,           label: "Whitelist"     },
   { to: "/actions",    icon: List,             label: "Log de Ações"  },
-  { to: "/queue",      icon: ListOrdered,      label: "Fila de Targets" },
   { to: "/extension",  icon: Chrome,           label: "Extensão"      },
   { to: "/settings",   icon: Settings,         label: "Configurações" },
 ];
