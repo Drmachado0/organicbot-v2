@@ -180,11 +180,13 @@ const BOT_MODES = [
   { value: "ver_story", label: "Ver Stories", desc: "Visualiza stories dos alvos" },
 ];
 
-const SAFETY_PRESETS = [
+const DEFAULT_SAFETY_PRESETS = [
   { id: "nova", label: "🟢 Conta Nova", delayMin: 45, delayMax: 90, follows: 40, unfollows: 30, likes: 80, session: 20, desc: "< 3 meses · risco mínimo" },
   { id: "media", label: "🟡 Conta Média", delayMin: 25, delayMax: 45, follows: 100, unfollows: 80, likes: 200, session: 50, desc: "3–12 meses · crescimento estável" },
   { id: "madura", label: "🔴 Conta Madura", delayMin: 15, delayMax: 25, follows: 200, unfollows: 150, likes: 400, session: 100, desc: "> 12 meses · máximo crescimento" },
 ];
+
+type SafetyPreset = typeof DEFAULT_SAFETY_PRESETS[number];
 
 function parseSettings(raw: Record<string, unknown> | null): BotSettings {
   if (!raw) return { ...DEFAULTS };
@@ -910,6 +912,8 @@ function ExtensionSyncSection({ userId }: { userId: string }) {
 export default function BotSettings() {
   const { user } = useAuth();
   const [settings, setSettings] = useState<BotSettings>({ ...DEFAULTS });
+  const [safetyPresets, setSafetyPresets] = useState<SafetyPreset[]>(DEFAULT_SAFETY_PRESETS.map(p => ({ ...p })));
+  const [editingPreset, setEditingPreset] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -1063,88 +1067,160 @@ export default function BotSettings() {
           >
             <p className="text-xs text-muted-foreground -mt-1">Aplica automaticamente delays e limites recomendados. Envia comando imediato à extensão.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {SAFETY_PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={async () => {
-                    const presetValues = {
-                      delay_min: p.delayMin,
-                      delay_max: p.delayMax,
-                      follow_daily_limit: p.follows,
-                      unfollow_daily_limit: p.unfollows,
-                      like_daily_limit: p.likes,
-                      max_actions_per_session: p.session,
-                    };
-                    // 1. Update local UI
-                    setSettings((prev) => ({ ...prev, ...presetValues }));
-                    setIsDirty(false);
+              {safetyPresets.map((p, idx) => {
+                const isEditing = editingPreset === p.id;
+                return (
+                  <div
+                    key={p.id}
+                    className="rounded-xl px-4 py-4 text-left space-y-2 transition-all"
+                    style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(220 18% 22%)" }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-bold">{p.label}</p>
+                      <button
+                        type="button"
+                        onClick={() => setEditingPreset(isEditing ? null : p.id)}
+                        className="text-[10px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded border border-border/50 hover:border-border"
+                      >
+                        {isEditing ? "OK" : "Editar"}
+                      </button>
+                    </div>
 
-                    try {
-                      // 2. Fetch current settings_json and merge
-                      const { data: currentSettings } = await supabase
-                        .from("user_settings")
-                        .select("settings_json")
-                        .eq("user_id", user?.id ?? "")
-                        .limit(1)
-                        .maybeSingle();
-                      const currentJson = (currentSettings?.settings_json as Record<string, unknown>) || {};
-                      const mergedJson = { ...currentJson, ...presetValues, dashboard_url: "https://organicbot.lovable.app" };
+                    {isEditing ? (
+                      <div className="space-y-1.5">
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">Follow/dia</label>
+                            <Input
+                              type="number" min={1} max={500}
+                              value={p.follows}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setSafetyPresets(prev => prev.map((pr, i) => i === idx ? { ...pr, follows: val } : pr));
+                              }}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">Sessão</label>
+                            <Input
+                              type="number" min={1} max={500}
+                              value={p.session}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setSafetyPresets(prev => prev.map((pr, i) => i === idx ? { ...pr, session: val } : pr));
+                              }}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">Delay mín (s)</label>
+                            <Input
+                              type="number" min={1} max={300}
+                              value={p.delayMin}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setSafetyPresets(prev => prev.map((pr, i) => i === idx ? { ...pr, delayMin: val } : pr));
+                              }}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">Delay máx (s)</label>
+                            <Input
+                              type="number" min={1} max={300}
+                              value={p.delayMax}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setSafetyPresets(prev => prev.map((pr, i) => i === idx ? { ...pr, delayMax: val } : pr));
+                              }}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground space-y-0.5">
+                        <p>Follow: <span className="text-foreground font-medium">{p.follows}/dia</span></p>
+                        <p>Delay: <span className="text-foreground font-medium">{p.delayMin}–{p.delayMax}s</span></p>
+                        <p>Sessão: <span className="text-foreground font-medium">{p.session} ações</span></p>
+                      </div>
+                    )}
 
-                      // 3. Upsert user_settings with merged JSON
-                      await supabase.from("user_settings").upsert(
-                        { user_id: user?.id ?? "", settings_json: mergedJson, updated_at: new Date().toISOString() },
-                        { onConflict: "user_id" }
-                      );
+                    <p className="text-xs text-muted-foreground/60">{p.desc}</p>
 
-                      // 4. Update ig_accounts with fields the extension reads directly
-                      const { data: accs } = await supabase
-                        .from("ig_accounts")
-                        .select("id")
-                        .eq("user_id", user?.id ?? "")
-                        .eq("is_active", true);
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full text-xs h-7 mt-1"
+                      onClick={async () => {
+                        const presetValues = {
+                          delay_min: p.delayMin,
+                          delay_max: p.delayMax,
+                          follow_daily_limit: p.follows,
+                          unfollow_daily_limit: p.unfollows,
+                          like_daily_limit: p.likes,
+                          max_actions_per_session: p.session,
+                        };
+                        setSettings((prev) => ({ ...prev, ...presetValues }));
+                        setIsDirty(false);
 
-                      if (accs && accs.length > 0) {
-                        await Promise.all(
-                          accs.map((acc) =>
-                            supabase.from("ig_accounts").update({
-                              delay_min: p.delayMin,
-                              delay_max: p.delayMax,
-                              max_actions_per_session: p.session,
-                              likes_per_follow: settings.likes_per_follow ?? 2,
-                            }).eq("id", acc.id)
-                          )
-                        );
+                        try {
+                          const { data: currentSettings } = await supabase
+                            .from("user_settings")
+                            .select("settings_json")
+                            .eq("user_id", user?.id ?? "")
+                            .limit(1)
+                            .maybeSingle();
+                          const currentJson = (currentSettings?.settings_json as Record<string, unknown>) || {};
+                          const mergedJson = { ...currentJson, ...presetValues, dashboard_url: "https://organicbot.lovable.app" };
 
-                        // 5. Send sync_settings to all active accounts
-                        await Promise.allSettled(
-                          accs.map((acc) =>
-                            supabase.rpc("send_bot_command", {
-                              p_ig_account_id: acc.id,
-                              p_command: "sync_settings",
-                              p_params: {},
-                            })
-                          )
-                        );
-                        toast.success(`Preset "${p.id}" salvo e sincronizado!`);
-                      } else {
-                        toast.success(`Preset "${p.id}" salvo!`);
-                      }
-                    } catch {
-                      toast.error("Erro ao salvar preset.");
-                    }
-                  }}
-                  className="rounded-xl px-4 py-4 text-left space-y-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
-                  style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(220 18% 22%)" }}
-                >
-                  <p className="text-xs font-bold">{p.label}</p>
-                  <div className="text-xs text-muted-foreground space-y-0.5">
-                    <p>Follow: <span className="text-foreground font-medium">{p.follows}/dia</span></p>
-                    <p>Delay: <span className="text-foreground font-medium">{p.delayMin}–{p.delayMax}s</span></p>
-                    <p>Sessão: <span className="text-foreground font-medium">{p.session} ações</span></p>
+                          await supabase.from("user_settings").upsert(
+                            { user_id: user?.id ?? "", settings_json: mergedJson, updated_at: new Date().toISOString() },
+                            { onConflict: "user_id" }
+                          );
+
+                          const { data: accs } = await supabase
+                            .from("ig_accounts")
+                            .select("id")
+                            .eq("user_id", user?.id ?? "")
+                            .eq("is_active", true);
+
+                          if (accs && accs.length > 0) {
+                            await Promise.all(
+                              accs.map((acc) =>
+                                supabase.from("ig_accounts").update({
+                                  delay_min: p.delayMin,
+                                  delay_max: p.delayMax,
+                                  max_actions_per_session: p.session,
+                                  likes_per_follow: settings.likes_per_follow ?? 2,
+                                }).eq("id", acc.id)
+                              )
+                            );
+
+                            await Promise.allSettled(
+                              accs.map((acc) =>
+                                supabase.rpc("send_bot_command", {
+                                  p_ig_account_id: acc.id,
+                                  p_command: "sync_settings",
+                                  p_params: {},
+                                })
+                              )
+                            );
+                            toast.success(`Preset "${p.label}" aplicado e sincronizado!`);
+                          } else {
+                            toast.success(`Preset "${p.label}" aplicado!`);
+                          }
+                        } catch {
+                          toast.error("Erro ao aplicar preset.");
+                        }
+                      }}
+                    >
+                      <Zap className="w-3 h-3" /> Aplicar
+                    </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground/60">{p.desc}</p>
-                </button>
-              ))}
+                );
+              })}
             </div>
           </SectionCard>
 
