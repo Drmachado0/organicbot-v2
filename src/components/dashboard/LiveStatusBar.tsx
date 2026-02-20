@@ -1,18 +1,15 @@
 import { useState, useEffect } from "react";
-import { Clock, Wifi, WifiOff, Zap, Chrome } from "lucide-react";
+import { Clock, Wifi, WifiOff, Chrome } from "lucide-react";
 import type { DashboardAccount } from "@/hooks/useDashboardV2";
 
 interface Props {
   account: DashboardAccount | null;
 }
 
-function formatDuration(ms: number): string {
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  const s = Math.floor((ms % 60000) / 1000);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+function formatHeartbeatAge(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
 function getModeLabel(mode: string | null): string {
@@ -42,21 +39,21 @@ const extStatusConfig = {
 };
 
 export function LiveStatusBar({ account }: Props) {
-  const [countdown, setCountdown] = useState(47);
-  const [sessionMs, setSessionMs] = useState(0);
-
+  // Tick every 10s to keep heartbeat label fresh
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCountdown((prev) => (prev <= 1 ? Math.floor(Math.random() * 60) + 20 : prev - 1));
-      setSessionMs((prev) => prev + 1000);
-    }, 1000);
-    return () => clearInterval(interval);
+    const id = setInterval(() => setTick(t => t + 1), 10_000);
+    return () => clearInterval(id);
   }, []);
 
   const isOnline = account?.bot_online ?? false;
   const mode = getModeLabel(account?.bot_mode ?? null);
   const extStatus = getExtensionStatus(account?.last_heartbeat ?? null);
   const extCfg = extStatusConfig[extStatus];
+
+  const heartbeatAge = account?.last_heartbeat
+    ? Math.floor((Date.now() - new Date(account.last_heartbeat).getTime()) / 1000)
+    : null;
 
   return (
     <div
@@ -89,30 +86,17 @@ export function LiveStatusBar({ account }: Props) {
 
       <div className="w-px h-4 bg-border/60 hidden sm:block" />
 
-      {/* Session time */}
+      {/* Heartbeat age (real data) */}
       <div className="flex items-center gap-1.5 text-muted-foreground text-sm">
         <Clock className="h-3.5 w-3.5" />
         <span>
-          {isOnline ? (
-            <>Rodando há <span className="text-foreground font-medium">{formatDuration(sessionMs)}</span></>
+          {heartbeatAge !== null ? (
+            <>Último heartbeat há <span className="text-foreground font-medium">{formatHeartbeatAge(heartbeatAge)}</span></>
           ) : (
-            <span>Sessão inativa</span>
+            <span>Sem heartbeat</span>
           )}
         </span>
       </div>
-
-      {isOnline && (
-        <>
-          <div className="w-px h-4 bg-border/60 hidden sm:block" />
-          <div className="flex items-center gap-1.5 text-muted-foreground text-sm">
-            <Zap className="h-3.5 w-3.5 text-primary" />
-            <span>
-              Próxima ação em{" "}
-              <span className="text-foreground font-medium tabular-nums">{countdown}s</span>
-            </span>
-          </div>
-        </>
-      )}
 
       {/* Extension heartbeat badge */}
       <div
