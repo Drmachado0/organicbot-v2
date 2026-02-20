@@ -615,29 +615,49 @@ export default function QueuePage() {
                 <Button size="sm" variant="outline" className="text-xs h-8 flex-1" onClick={() => setImportOpen(true)}>
                   <Upload className="w-3 h-3" /> Importar Lista
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-xs h-8 flex-1 border-orange-500/40 text-orange-400 hover:bg-orange-500/10"
-                  disabled={pendingCount === 0 || !!loadingCmd}
-                  onClick={async () => {
-                    if (!accountId) return;
-                    setLoadingCmd("remove_duplicates");
-                    try {
-                      const { data, error } = await supabase.rpc("remove_duplicate_targets", { p_ig_account_id: accountId });
-                      if (error) {
-                        toast({ title: "Erro", description: error.message, variant: "destructive" });
-                      } else {
-                        toast({ title: `${data} duplicata(s) removida(s)`, description: "Fila atualizada." });
-                        loadQueue();
-                      }
-                    } finally {
-                      setLoadingCmd(null);
-                    }
-                  }}
-                >
-                  <Trash2 className="w-3 h-3" /> Duplicatas
-                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-8 flex-1 border-orange-500/40 text-orange-400 hover:bg-orange-500/10"
+                      disabled={pendingCount === 0 || !!loadingCmd}
+                    >
+                      <Trash2 className="w-3 h-3" /> Duplicatas
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Remover duplicatas?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Usernames duplicados serão removidos da fila, mantendo apenas a primeira ocorrência de cada um.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-orange-600 hover:bg-orange-700 text-white"
+                        onClick={async () => {
+                          if (!accountId) return;
+                          setLoadingCmd("remove_duplicates");
+                          try {
+                            const { data, error } = await supabase.rpc("remove_duplicate_targets", { p_ig_account_id: accountId });
+                            if (error) {
+                              toast({ title: "Erro", description: error.message, variant: "destructive" });
+                            } else {
+                              toast({ title: `${data} duplicata(s) removida(s)`, description: "Fila atualizada." });
+                              loadQueue();
+                            }
+                          } finally {
+                            setLoadingCmd(null);
+                          }
+                        }}
+                      >
+                        Remover
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button size="sm" variant="destructive" className="text-xs h-8 flex-1" disabled={pendingCount === 0}>
