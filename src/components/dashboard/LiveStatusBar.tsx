@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Clock, Wifi, WifiOff, Chrome } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { DashboardAccount } from "@/hooks/useDashboardV2";
 
 interface Props {
@@ -86,17 +87,25 @@ export function LiveStatusBar({ account }: Props) {
 
       <div className="w-px h-4 bg-border/60 hidden sm:block" />
 
-      {/* Heartbeat age (real data) */}
-      <div className="flex items-center gap-1.5 text-muted-foreground text-sm">
-        <Clock className="h-3.5 w-3.5" />
-        <span>
-          {heartbeatAge !== null ? (
-            <>Último heartbeat há <span className="text-foreground font-medium">{formatHeartbeatAge(heartbeatAge)}</span></>
-          ) : (
-            <span>Sem heartbeat</span>
-          )}
-        </span>
-      </div>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center gap-1.5 text-muted-foreground text-sm cursor-default">
+            <Clock className="h-3.5 w-3.5" />
+            <span>
+              {heartbeatAge !== null ? (
+                <>Último heartbeat há <span className="text-foreground font-medium">{formatHeartbeatAge(heartbeatAge)}</span></>
+              ) : (
+                <span>Sem heartbeat</span>
+              )}
+            </span>
+          </div>
+        </TooltipTrigger>
+        {account?.last_heartbeat && (
+          <TooltipContent>
+            {new Date(account.last_heartbeat).toLocaleString("pt-BR")}
+          </TooltipContent>
+        )}
+      </Tooltip>
 
       {/* Extension heartbeat badge */}
       <div
