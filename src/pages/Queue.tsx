@@ -158,6 +158,8 @@ export default function QueuePage() {
   const [hashtagInput, setHashtagInput] = useState("");
   const [locationInput, setLocationInput] = useState("");
   const [loadingCmd, setLoadingCmd] = useState<string | null>(null);
+  const [manualPicOpen, setManualPicOpen] = useState(false);
+  const [manualPicUrl, setManualPicUrl] = useState("");
 
   // Synced settings (from user_settings.settings_json)
   const [cfgDelayMin, setCfgDelayMin] = useState(25);
@@ -386,7 +388,9 @@ export default function QueuePage() {
     }
   };
 
-  // ── Atualizar Foto (via Edge Function) ──────────────────────────────────
+
+
+
   const handleUpdateProfilePic = async () => {
     if (!accountId || !account?.ig_username) return;
     setLoadingCmd("update_profile_pic");
@@ -397,8 +401,28 @@ export default function QueuePage() {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       toast({ title: "Foto atualizada!", description: "A foto de perfil foi atualizada com sucesso." });
+    } catch {
+      // Auto-fetch failed — open manual input dialog
+      setManualPicOpen(true);
+    } finally {
+      setLoadingCmd(null);
+    }
+  };
+
+  const handleManualPicSave = async () => {
+    if (!accountId || !manualPicUrl.trim()) return;
+    setLoadingCmd("update_profile_pic");
+    try {
+      const { error } = await supabase
+        .from("ig_accounts")
+        .update({ profile_pic_url: manualPicUrl.trim() })
+        .eq("id", accountId);
+      if (error) throw error;
+      toast({ title: "Foto atualizada!", description: "A foto de perfil foi salva manualmente." });
+      setManualPicOpen(false);
+      setManualPicUrl("");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Falha ao atualizar foto.";
+      const msg = err instanceof Error ? err.message : "Falha ao salvar foto.";
       toast({ title: "Erro", description: msg, variant: "destructive" });
     } finally {
       setLoadingCmd(null);
@@ -1370,6 +1394,31 @@ export default function QueuePage() {
           <DialogFooter>
             <Button size="sm" variant="ghost" onClick={() => setManualOpen(false)}>Cancelar</Button>
             <Button size="sm" onClick={handleManual} disabled={!manualText.trim()}>Adicionar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Manual Profile Pic Modal ── */}
+      <Dialog open={manualPicOpen} onOpenChange={(open) => { setManualPicOpen(open); if (!open) setManualPicUrl(""); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Atualizar Foto de Perfil</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Não foi possível buscar a foto automaticamente (Instagram bloqueia servidores).
+            Cole a URL da foto de perfil abaixo. Você pode copiar a URL clicando com o botão direito na foto do perfil no Instagram e selecionando "Copiar endereço da imagem".
+          </p>
+          <Input
+            placeholder="https://instagram.f..."
+            value={manualPicUrl}
+            onChange={(e) => setManualPicUrl(e.target.value)}
+            className="text-xs"
+          />
+          <DialogFooter>
+            <Button size="sm" variant="ghost" onClick={() => setManualPicOpen(false)}>Cancelar</Button>
+            <Button size="sm" onClick={handleManualPicSave} disabled={!manualPicUrl.trim() || loadingCmd === "update_profile_pic"}>
+              {loadingCmd === "update_profile_pic" ? "Salvando..." : "Salvar"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
