@@ -149,8 +149,14 @@ export default function QueuePage() {
   const [manualText, setManualText] = useState("");
   const [hashtagInput, setHashtagInput] = useState("");
   const [locationInput, setLocationInput] = useState("");
-  const [delayValue, setDelayValue] = useState(60);
   const [loadingCmd, setLoadingCmd] = useState<string | null>(null);
+
+  // Synced settings (from user_settings.settings_json)
+  const [cfgDelayMin, setCfgDelayMin] = useState(25);
+  const [cfgDelayMax, setCfgDelayMax] = useState(45);
+  const [cfgFollowDaily, setCfgFollowDaily] = useState(150);
+  const [cfgMaxSession, setCfgMaxSession] = useState(50);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   // Filters for Aba 2
   const [searchQ, setSearchQ] = useState("");
@@ -208,6 +214,24 @@ export default function QueuePage() {
     const pending = rows.filter((r) => r.status === "pending" || r.status === "injected");
     setPendingRows(pending);
   }, [accountId]);
+
+  // ── Load synced settings from user_settings + ig_accounts ───────────────
+  const loadSettings = useCallback(async () => {
+    if (!user || !accountId) return;
+    const [settingsRes, accountRes] = await Promise.all([
+      supabase.from("user_settings").select("settings_json").eq("user_id", user.id).maybeSingle(),
+      supabase.from("ig_accounts").select("delay_min, delay_max, max_actions_per_session").eq("id", accountId).maybeSingle(),
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sj = (settingsRes.data?.settings_json as any) ?? {};
+    const acc = accountRes.data;
+    setCfgDelayMin(acc?.delay_min ?? Number(sj.delay_min ?? 25));
+    setCfgDelayMax(acc?.delay_max ?? Number(sj.delay_max ?? 45));
+    setCfgFollowDaily(Number(sj.follow_daily_limit ?? 150));
+    setCfgMaxSession(acc?.max_actions_per_session ?? Number(sj.max_actions_per_session ?? 50));
+  }, [user, accountId]);
+
+  useEffect(() => { loadQueue(); loadSettings(); }, [loadQueue, loadSettings]);
 
   useEffect(() => {
     loadQueue();
@@ -765,30 +789,76 @@ export default function QueuePage() {
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="px-4 pb-4 space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1">
-                        <p className="text-xs font-medium text-foreground">Delay entre ações (s)</p>
-                        <p className="text-[10px] text-muted-foreground">Pausa após cada follow/like</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-[10px] text-muted-foreground mb-1">Delay mín (s)</p>
+                        <Input type="number" min={5} max={300} value={cfgDelayMin}
+                          onChange={(e) => setCfgDelayMin(Number(e.target.value))}
+                          className="h-8 text-xs text-center border-border bg-secondary" />
                       </div>
-                      <Input
-                        type="number"
-                        min={5}
-                        max={300}
-                        value={delayValue}
-                        onChange={(e) => setDelayValue(Number(e.target.value))}
-                        className="w-20 h-8 text-xs text-center border-border bg-secondary"
-                      />
-                      <Button size="sm" className="h-8 text-xs" onClick={async () => {
-                        if (!user) return;
+                      <div>
+                        <p className="text-[10px] text-muted-foreground mb-1">Delay máx (s)</p>
+                        <Input type="number" min={5} max={300} value={cfgDelayMax}
+                          onChange={(e) => setCfgDelayMax(Number(e.target.value))}
+                          className="h-8 text-xs text-center border-border bg-secondary" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground mb-1">Follows/dia</p>
+                        <Input type="number" min={1} max={500} value={cfgFollowDaily}
+                          onChange={(e) => setCfgFollowDaily(Number(e.target.value))}
+                          className="h-8 text-xs text-center border-border bg-secondary" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground mb-1">Max ações/sessão</p>
+                        <Input type="number" min={1} max={500} value={cfgMaxSession}
+                          onChange={(e) => setCfgMaxSession(Number(e.target.value))}
+                          className="h-8 text-xs text-center border-border bg-secondary" />
+                      </div>
+                    </div>
+                    <Button size="sm" className="h-8 text-xs w-full" disabled={savingConfig} onClick={async () => {
+                      if (!user || !accountId) return;
+                      setSavingConfig(true);
+                      try {
+                        // 1. Merge into user_settings.settings_json
                         const { data: existing } = await supabase.from("user_settings").select("settings_json").eq("user_id", user.id).maybeSingle();
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         const prevJson: any = existing?.settings_json ?? {};
-                        await supabase.from("user_settings").upsert({ user_id: user.id, settings_json: { ...prevJson, wait_after_action: delayValue } as never }, { onConflict: "user_id" });
-                        toast({ title: "Delay salvo" });
-                      }}>
-                        Salvar
-                      </Button>
-                    </div>
+                        const merged = {
+                          ...prevJson,
+                          delay_min: cfgDelayMin,
+                          delay_max: cfgDelayMax,
+                          follow_daily_limit: cfgFollowDaily,
+                          max_actions_per_session: cfgMaxSession,
+                        };
+                        await supabase.from("user_settings").upsert(
+                          { user_id: user.id, settings_json: merged as never, updated_at: new Date().toISOString() },
+                          { onConflict: "user_id" }
+                        );
+
+                        // 2. Dual-write to ig_accounts
+                        await supabase.from("ig_accounts").update({
+                          delay_min: cfgDelayMin,
+                          delay_max: cfgDelayMax,
+                          max_actions_per_session: cfgMaxSession,
+                          updated_at: new Date().toISOString(),
+                        }).eq("id", accountId);
+
+                        // 3. Send sync_settings command to extension
+                        await supabase.rpc("send_bot_command", {
+                          p_ig_account_id: accountId,
+                          p_command: "sync_settings",
+                          p_params: {},
+                        });
+
+                        toast({ title: "Configurações salvas", description: "Sincronizado com a extensão." });
+                      } catch {
+                        toast({ title: "Erro ao salvar", variant: "destructive" });
+                      } finally {
+                        setSavingConfig(false);
+                      }
+                    }}>
+                      {savingConfig ? "Salvando..." : "Salvar e sincronizar"}
+                    </Button>
                   </div>
                 </CollapsibleContent>
               </div>
