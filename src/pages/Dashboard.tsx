@@ -54,6 +54,7 @@ export default function Dashboard() {
     whitelistPreview,
     automationPaused,
     recentCommands,
+    dailyLimits,
     isLoading,
     error,
     toggleBot,
@@ -229,7 +230,7 @@ export default function Dashboard() {
 
         {/* ── Row 1: KPI Cards ── */}
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          <ActionProgressCard todayActions={todayActions} isLoading={isLoading} />
+          <ActionProgressCard todayActions={todayActions} limits={dailyLimits} isLoading={isLoading} />
 
           <KpiCard
             label="Fila Pendente"
