@@ -1,72 +1,73 @@
 
+# Auto-Sync Completo em Todo o Projeto
 
-# Sincronizacao Completa: App ↔ Extensao
+## Problema
 
-## Problema Atual
+Os presets de seguranca na Settings page enviam um comando `set_safety_preset` para a extensao mas NAO fazem a escrita dupla (dual-write) nas tabelas `user_settings` e `ig_accounts`. Isso significa que:
+- A extensao recebe o comando mas os valores nao ficam persistidos no banco
+- Se a extensao reiniciar, perde as configuracoes do preset
+- A Settings page mostra os valores na UI (via `setSettings`) mas se o usuario recarregar a pagina, volta aos valores antigos
 
-O sistema tem **3 pontos** onde configuracoes sao salvas, cada um com comportamento diferente:
+Alem disso, o `toggleBot` no dashboard envia pause/start mas nao envia `sync_settings` para garantir que a extensao releia todas as configs.
 
-1. **Settings page** (`save()`): faz dual-write (user_settings + ig_accounts) mas **NAO envia `sync_settings` automaticamente** -- o usuario precisa clicar manualmente em "Forcar sync agora"
-2. **Queue page** (configuracoes): faz dual-write + envia `sync_settings` (corrigido na sessao anterior)
-3. **Dashboard** (presets de seguranca via Settings): mesma logica da Settings page -- sem auto-sync
+## Alteracoes
 
-Resultado: o usuario salva configuracoes e acha que a extensao ja esta usando, mas ela so le quando faz polling periodico (ate 45s) ou quando recebe o comando `sync_settings`.
+### 1. Safety Presets com dual-write completo (`src/pages/Settings.tsx`)
 
-## Solucao
+Na funcao onClick dos presets (linhas 1068-1093), apos atualizar o estado local:
 
-### 1. Settings page -- auto-sync apos salvar
+- Fazer `upsert` em `user_settings.settings_json` com os valores do preset (delay_min, delay_max, follow_daily_limit, etc.)
+- Fazer `update` em `ig_accounts` com os campos que a extensao le diretamente (delay_min, delay_max, max_actions_per_session, likes_per_follow)
+- Enviar `sync_settings` em vez de `set_safety_preset` (para a extensao reler os valores do banco em vez de depender dos params do comando)
+- Marcar `isDirty = false` pois os dados ja foram salvos
 
-Na funcao `save()` (linha ~947 de Settings.tsx), apos o dual-write bem sucedido, enviar automaticamente o comando `sync_settings` para **todas as contas ativas** do usuario. Isso elimina a necessidade de clicar manualmente no botao "Forcar sync agora".
+### 2. toggleBot com sync_settings (`src/hooks/useDashboardV2.ts`)
 
-Logica a adicionar apos linha 971:
-- Buscar todas as contas ativas do usuario
-- Para cada conta, chamar `send_bot_command` com `sync_settings`
-- Toast de sucesso ja inclui menssagem de sincronizacao
+Na funcao `toggleBot` (linha 297-335), apos enviar o comando pause/start e atualizar `user_settings.automation_paused`:
 
-### 2. Manter o botao "Forcar sync agora" como fallback
+- Enviar tambem `sync_settings` para a conta ativa, garantindo que a extensao releia o estado de automacao
 
-O botao na secao ExtensionSyncSection continua existindo para casos onde o usuario quer forcar um re-sync sem salvar (ex: extensao reiniciou).
+### Detalhes Tecnicos
 
-### 3. Duplicata de useEffect no Queue.tsx
+**Settings.tsx - Preset onClick (substituir linhas 1068-1093):**
 
-Ha um `useEffect` duplicado no Queue.tsx (linhas 234 e 236-238) que chama `loadQueue()` duas vezes. Sera removido.
+```text
+onClick:
+1. setSettings(...) -- atualizar UI local (ja existe)
+2. setIsDirty(false) -- nao precisa mais salvar manualmente
+3. Buscar settings_json atual do user_settings
+4. Fazer merge com valores do preset
+5. Upsert em user_settings com o JSON merged
+6. Update em ig_accounts: delay_min, delay_max, max_actions_per_session, likes_per_follow
+7. Enviar sync_settings para todas as contas ativas
+8. Toast de sucesso
+```
 
-## Detalhes Tecnicos
+**useDashboardV2.ts - toggleBot (apos linha 322):**
 
-### Arquivo: `src/pages/Settings.tsx`
-
-Na funcao `save()` (~linha 947-980):
-- Apos o dual-write (user_settings + ig_accounts) com sucesso
-- Buscar `ig_accounts` ativas do usuario: `supabase.from("ig_accounts").select("id").eq("user_id", user.id).eq("is_active", true)`
-- Para cada conta, enviar: `supabase.rpc("send_bot_command", { p_ig_account_id: acc.id, p_command: "sync_settings", p_params: {} })`
-- Atualizar toast para: "Configuracoes salvas e sincronizadas!"
-
-### Arquivo: `src/pages/Queue.tsx`
-
-- Remover `useEffect` duplicado nas linhas 236-238 (ja coberto pela linha 234)
+```text
+Apos o upsert de automation_paused:
+- supabase.rpc("send_bot_command", { p_command: "sync_settings" })
+```
 
 ## Fluxo Resultante
 
 ```text
-Usuario altera config em QUALQUER pagina (Settings, Queue, Dashboard)
+Preset clicado / Bot pausado/iniciado
         |
         v
-Salva em user_settings.settings_json
+Valores persistidos em user_settings + ig_accounts
         |
         v
-Dual-write para ig_accounts (delay_min, delay_max, bot_mode, etc.)
+Comando sync_settings enviado
         |
         v
-Envia sync_settings automaticamente para todas as contas
-        |
-        v
-Extensao recebe comando e rele ig_accounts imediatamente
+Extensao rele ig_accounts imediatamente
 ```
 
-## Resumo das Alteracoes
+## Resumo
 
 | Arquivo | O que muda |
 |---|---|
-| `src/pages/Settings.tsx` | Adicionar auto-sync_settings na funcao save() |
-| `src/pages/Queue.tsx` | Remover useEffect duplicado (linha 236-238) |
-
+| src/pages/Settings.tsx | Presets fazem dual-write + sync_settings em vez de apenas set_safety_preset |
+| src/hooks/useDashboardV2.ts | toggleBot envia sync_settings apos pause/start |
