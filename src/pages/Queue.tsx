@@ -308,6 +308,38 @@ export default function QueuePage() {
 
   const pendingCount = filteredPendingRows.length;
 
+  // IDs to remove when applying filters permanently
+  const idsToRemove = useMemo(() => {
+    return pendingRows
+      .filter((r) => !filteredPendingRows.some((f) => f.id === r.id))
+      .map((r) => r.id);
+  }, [pendingRows, filteredPendingRows]);
+
+  const [applyingFilters, setApplyingFilters] = useState(false);
+
+  const handleApplyFilters = async () => {
+    if (!idsToRemove.length || !accountId) return;
+    setApplyingFilters(true);
+    try {
+      // Batch in chunks of 200 to avoid query limits
+      for (let i = 0; i < idsToRemove.length; i += 200) {
+        const chunk = idsToRemove.slice(i, i + 200);
+        const { error } = await supabase
+          .from("target_queue")
+          .update({ status: "skipped" })
+          .in("id", chunk);
+        if (error) {
+          toast({ title: "Erro", description: error.message, variant: "destructive" });
+          return;
+        }
+      }
+      toast({ title: `${idsToRemove.length} target(s) removidos`, description: "Filtros aplicados permanentemente." });
+      loadQueue();
+    } finally {
+      setApplyingFilters(false);
+    }
+  };
+
   // ── Realtime subscription ────────────────────────────────────────────────
 
   useEffect(() => {
@@ -876,6 +908,43 @@ export default function QueuePage() {
                         ))}
                       </div>
                     </div>
+
+                    {/* Aplicar Filtros button */}
+                    {idsToRemove.length > 0 && (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            size="sm"
+                            className="w-full text-xs h-8 bg-orange-600 hover:bg-orange-700 text-white"
+                            disabled={applyingFilters}
+                          >
+                            {applyingFilters ? (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3 h-3" />
+                            )}
+                            Aplicar Filtros ({idsToRemove.length} removidos)
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Aplicar filtros permanentemente?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {idsToRemove.length} target(s) serão marcados como "skipped" e removidos da fila permanentemente. Esta ação não pode ser desfeita.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="bg-orange-600 hover:bg-orange-700 text-white"
+                              onClick={handleApplyFilters}
+                            >
+                              Aplicar
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
 
                     <div className="h-px bg-border" />
 
