@@ -1,139 +1,83 @@
 
-# Nova Página: Gerenciamento de Fila (IG List Collector Clone)
+# Adicionar Filtros "TIPO DE CONTA" na Seção de Filtros
 
 ## Objetivo
 
-Criar uma página dedicada `/queue` que replica a interface do "IG List Collector" da extensão, permitindo coletar, visualizar, importar, exportar e gerenciar a fila de targets (`target_queue`) diretamente no painel web.
+Replicar a seção "TIPO DE CONTA" do IG List Collector na area de filtros colapsavel da aba Coletor, com checkboxes para filtrar targets na fila com base nas propriedades do perfil armazenadas na coluna `details` (JSON) da `target_queue`.
 
 ---
 
-## Análise da Interface de Referência
+## O que muda
 
-A imagem da extensão tem:
+### Arquivo: `src/pages/Queue.tsx`
 
-- **2 abas**: Coletor | Leitor de Lista
-- **PERFIL ATUAL**: avatar, @username, seguidores, seguindo, status do ID
-- **Botões de detecção**: Re-detectar, API, Manual
-- **COLETAR**: Seguidores, Seguindo, #Hashtag, Localização
-- **FILA COLETADA**: contador + exportar (JSON, CSV, TXT)
-- **Importar Lista / Limpar Fila**
-- **FILTROS** (seção colapsável)
-- **CONFIGURAÇÕES**: delay, etc.
+1. **Importar `Checkbox`** do `@/components/ui/checkbox`
 
----
+2. **Novos estados para os filtros de tipo de conta:**
+   - `removePrivate` (boolean) - Remover contas privadas
+   - `removePublic` (boolean) - Remover contas publicas
+   - `removeVerified` (boolean) - Remover verificadas
+   - `removeUnverified` (boolean) - Remover nao-verificadas
+   - `removeNoPhoto` (boolean) - Remover sem foto de perfil
+   - `removeDuplicates` (boolean, default: true) - Remover duplicadas
 
-## Arquitetura da Solução
+3. **Adicionar seção "TIPO DE CONTA" dentro do `CollapsibleContent` dos FILTROS**, antes dos filtros de Fonte e Status existentes. Layout:
+   - Titulo "TIPO DE CONTA" em uppercase
+   - 6 checkboxes com labels, usando o componente `Checkbox` do Radix UI
+   - Visual escuro com bordas sutis, seguindo o padrao da extensao
 
-```text
-/queue  →  src/pages/Queue.tsx  (nova página)
-           ├── Aba 1: Coletor
-           │   ├── PERFIL ATUAL (conta selecionada)
-           │   ├── COLETAR (enviar comandos para extensão)
-           │   ├── FILA COLETADA (count + export)
-           │   ├── Importar Lista (modal)
-           │   ├── Limpar Fila (confirm)
-           │   ├── FILTROS (colapsável)
-           │   └── CONFIGURAÇÕES (delay)
-           └── Aba 2: Leitor de Lista
-               └── Tabela paginada com target_queue
-                   (filtros: status, source, busca)
-```
+4. **Aplicar filtros client-side** na lista `pendingRows` e na contagem. Os filtros atuam sobre o campo `details` (JSON) de cada `TargetRow`:
+   - `is_private === true` -> removido se `removePrivate` ativo
+   - `is_private === false` -> removido se `removePublic` ativo
+   - `is_verified === true` -> removido se `removeVerified` ativo
+   - `is_verified === false` -> removido se `removeUnverified` ativo
+   - `profile_pic_url` vazio/default -> removido se `removeNoPhoto` ativo
+   - Duplicatas por username -> removido se `removeDuplicates` ativo
 
----
+5. **Atualizar `TargetRow` interface** para incluir `details` (JSON) e **atualizar o `loadQueue` select** para incluir `details`
 
-## Arquivos a Criar/Modificar
-
-| Arquivo | Operação | Mudança |
-|---|---|---|
-| `src/pages/Queue.tsx` | Criar | Página completa com 2 abas |
-| `src/App.tsx` | Editar | Adicionar rota `/queue` |
-| `src/components/layout/AppSidebar.tsx` | Editar | Adicionar item de nav "Fila" com ícone |
+6. **Atualizar a logica de importacao JSON** para salvar os metadados do perfil (`is_private`, `is_verified`, `profile_pic_url`, `full_name`, `id`) na coluna `details` ao importar arquivos no formato do IG List Collector
 
 ---
 
-## Detalhes Técnicos
+## Detalhes Tecnicos
 
-### Aba 1 — Coletor
-
-**PERFIL ATUAL**: Lê da `ig_accounts` a conta selecionada. Exibe:
-- Avatar (profile_pic_url) com outline colorido (online/offline)
-- @username, followers_count, following_count
-- Badge de status: "ID detectado" (ig_user_id preenchido) ou "Sem ID — será buscado via API ao iniciar coleta"
-- Botão "Re-detectar" → envia `send_bot_command("sync_settings")`
-- Botão "API" → envia `send_bot_command("collect_via_api")`
-- Botão "Manual" → abre textarea para colar usernames
-
-**COLETAR**: 4 botões que enviam comandos ao bot via `send_bot_command()`:
-
+### Estrutura do `details` JSON (vindo do IG List Collector)
 ```typescript
-// Seguidores
-send_bot_command("collect_followers", {})
-// Seguindo
-send_bot_command("collect_following", {})
-// Hashtag
-send_bot_command("collect_hashtag", { hashtag: inputValue })
-// Localização
-send_bot_command("collect_location", { location: inputValue })
+{
+  is_private: boolean;
+  is_verified: boolean;
+  profile_pic_url: string;
+  full_name: string;
+  id: string;
+  followed_by_viewer: boolean;
+}
 ```
 
-**FILA COLETADA**: Mostra `count` de targets `pending` da `target_queue`. Botões de exportação:
-- **JSON**: `JSON.stringify(rows)`
-- **CSV**: `username,source,created_at` por linha
-- **TXT**: uma linha por username
-
-**Importar Lista**: Modal com `<textarea>` para colar usernames (um por linha). Usa `add_targets_batch()` RPC do banco. Envia `sync_queue` ao finalizar.
-
-**Limpar Fila**: AlertDialog de confirmação → chama RPC `clear_target_queue(accountId, "pending")`.
-
-**FILTROS** (colapsável via `useState`):
-- Fonte: `manual`, `followers`, `following`, `hashtag`, `location`
-- Status: `pending`, `processing`, `done`, `skipped`
-
-**CONFIGURAÇÕES**:
-- Delay entre requisições (salva em `user_settings.settings_json.wait_after_action`)
-
-### Aba 2 — Leitor de Lista
-
-Tabela paginada da `target_queue` com:
-- Coluna: username, source (badge), status (badge colorido), priority, created_at, processed_at
-- Filtros: status, source, busca por username
-- Paginação: 50 por página
-- Realtime: subscription em `target_queue` para `INSERT` e `UPDATE`
-- Ações por linha: deletar target individual (soft delete via UPDATE status="skipped")
-
-### Seletor de Conta
-
-Dropdown no topo da página (igual ao de Campanhas/Actions) para selecionar a `ig_account_id` ativa.
-
-### Realtime
-
-Subscription em `target_queue` filtrado por `ig_account_id`:
+### Funcao de filtro aplicada aos rows
 ```typescript
-.on("postgres_changes", { event: "INSERT", table: "target_queue",
-  filter: `ig_account_id=eq.${accountId}` }, handler)
-.on("postgres_changes", { event: "UPDATE", table: "target_queue",
-  filter: `ig_account_id=eq.${accountId}` }, handler)
+function applyAccountFilters(rows: TargetRow[]): TargetRow[] {
+  let filtered = rows;
+  if (removeDuplicates) {
+    const seen = new Set<string>();
+    filtered = filtered.filter(r => {
+      const key = r.username.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  if (removePrivate) filtered = filtered.filter(r => !(r.details as any)?.is_private);
+  if (removePublic) filtered = filtered.filter(r => (r.details as any)?.is_private !== false);
+  if (removeVerified) filtered = filtered.filter(r => !(r.details as any)?.is_verified);
+  if (removeUnverified) filtered = filtered.filter(r => (r.details as any)?.is_verified !== false);
+  if (removeNoPhoto) filtered = filtered.filter(r => {
+    const url = (r.details as any)?.profile_pic_url ?? "";
+    return url && !url.includes("default");
+  });
+  return filtered;
+}
 ```
 
----
-
-## Visual — Fidelidade com a Extensão
-
-| Elemento da extensão | Implementação no painel |
-|---|---|
-| Fundo escuro, bordas sutis | `glass-card` + dark theme existente |
-| Abas "Coletor / Leitor de Lista" | `Tabs` do Radix UI |
-| Botões azuis de ação | `Button` com `bg-blue-600` (seguindo o estilo da extensão) |
-| Badges JSON/CSV/TXT | `Button` variant `outline` com cor verde |
-| Seção FILTROS colapsável | `Collapsible` do Radix UI |
-| Counter "0 contas na fila" | número grande + label abaixo |
-| Botão "Limpar Fila" vermelho | `Button variant="destructive"` |
-
----
-
-## Sidebar
-
-Adicionar entre "Log de Ações" e "Extensão":
-```typescript
-{ to: "/queue", icon: ListOrdered, label: "Fila de Targets" }
-```
+### Importacao JSON atualizada
+Ao importar um arquivo `.json` no formato do IG List Collector, alem de extrair o `username`, salvar o objeto inteiro como `details` na chamada RPC ou insert, permitindo que os filtros funcionem imediatamente apos a importacao.
