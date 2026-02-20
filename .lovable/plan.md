@@ -1,73 +1,61 @@
 
-# Auto-Sync Completo em Todo o Projeto
+
+# Corrigir URL do "Abrir Dashboard" na Extensao
 
 ## Problema
 
-Os presets de seguranca na Settings page enviam um comando `set_safety_preset` para a extensao mas NAO fazem a escrita dupla (dual-write) nas tabelas `user_settings` e `ig_accounts`. Isso significa que:
-- A extensao recebe o comando mas os valores nao ficam persistidos no banco
-- Se a extensao reiniciar, perde as configuracoes do preset
-- A Settings page mostra os valores na UI (via `setSettings`) mas se o usuario recarregar a pagina, volta aos valores antigos
+O botao "Abrir Dashboard" na extensao Chrome abre uma URL antiga (provavelmente `organicpublic.lovable.app`). A URL correta e `https://organicbot.lovable.app`. Essa URL esta hardcoded no codigo da extensao no GitHub.
 
-Alem disso, o `toggleBot` no dashboard envia pause/start mas nao envia `sync_settings` para garantir que a extensao releia todas as configs.
+## Solucao
 
-## Alteracoes
+Armazenar a `dashboard_url` no banco de dados (`user_settings.settings_json`) para que a extensao leia dinamicamente. Assim, sempre que a URL mudar, basta atualizar em um lugar.
 
-### 1. Safety Presets com dual-write completo (`src/pages/Settings.tsx`)
+### Alteracoes
 
-Na funcao onClick dos presets (linhas 1068-1093), apos atualizar o estado local:
+**1. Incluir `dashboard_url` no settings_json (`src/pages/Settings.tsx`)**
 
-- Fazer `upsert` em `user_settings.settings_json` com os valores do preset (delay_min, delay_max, follow_daily_limit, etc.)
-- Fazer `update` em `ig_accounts` com os campos que a extensao le diretamente (delay_min, delay_max, max_actions_per_session, likes_per_follow)
-- Enviar `sync_settings` em vez de `set_safety_preset` (para a extensao reler os valores do banco em vez de depender dos params do comando)
-- Marcar `isDirty = false` pois os dados ja foram salvos
+Na funcao `save()` e nos presets, garantir que o campo `dashboard_url: "https://organicbot.lovable.app"` seja sempre incluido no `settings_json` ao fazer upsert.
 
-### 2. toggleBot com sync_settings (`src/hooks/useDashboardV2.ts`)
+**2. Garantir `dashboard_url` no fetch inicial (`src/pages/Settings.tsx`)**
 
-Na funcao `toggleBot` (linha 297-335), apos enviar o comando pause/start e atualizar `user_settings.automation_paused`:
+Ao carregar as settings, se `dashboard_url` nao existir no JSON, adicionar automaticamente e salvar.
 
-- Enviar tambem `sync_settings` para a conta ativa, garantindo que a extensao releia o estado de automacao
+**3. Migration: atualizar registros existentes**
 
-### Detalhes Tecnicos
-
-**Settings.tsx - Preset onClick (substituir linhas 1068-1093):**
+Criar uma migration SQL que faz update em todos os `user_settings` existentes, adicionando `dashboard_url` ao `settings_json`:
 
 ```text
-onClick:
-1. setSettings(...) -- atualizar UI local (ja existe)
-2. setIsDirty(false) -- nao precisa mais salvar manualmente
-3. Buscar settings_json atual do user_settings
-4. Fazer merge com valores do preset
-5. Upsert em user_settings com o JSON merged
-6. Update em ig_accounts: delay_min, delay_max, max_actions_per_session, likes_per_follow
-7. Enviar sync_settings para todas as contas ativas
-8. Toast de sucesso
+UPDATE user_settings 
+SET settings_json = settings_json || '{"dashboard_url": "https://organicbot.lovable.app"}'::jsonb
+WHERE settings_json IS NOT NULL 
+  AND NOT (settings_json ? 'dashboard_url');
 ```
 
-**useDashboardV2.ts - toggleBot (apos linha 322):**
+**4. Atualizar constante na Extension page**
+
+A constante `DASHBOARD_URL` em `src/pages/Extension.tsx` ja esta correta (`https://organicbot.lovable.app`). Nenhuma alteracao necessaria nesse arquivo.
+
+### Fluxo
 
 ```text
-Apos o upsert de automation_paused:
-- supabase.rpc("send_bot_command", { p_command: "sync_settings" })
+Usuario salva settings / clica preset
+        |
+        v
+settings_json inclui dashboard_url
+        |
+        v
+sync_settings enviado
+        |
+        v
+Extensao le settings_json e usa dashboard_url para o botao "Abrir Dashboard"
 ```
 
-## Fluxo Resultante
+### Resumo
 
-```text
-Preset clicado / Bot pausado/iniciado
-        |
-        v
-Valores persistidos em user_settings + ig_accounts
-        |
-        v
-Comando sync_settings enviado
-        |
-        v
-Extensao rele ig_accounts imediatamente
-```
-
-## Resumo
-
-| Arquivo | O que muda |
+| Arquivo / Recurso | Alteracao |
 |---|---|
-| src/pages/Settings.tsx | Presets fazem dual-write + sync_settings em vez de apenas set_safety_preset |
-| src/hooks/useDashboardV2.ts | toggleBot envia sync_settings apos pause/start |
+| Migration SQL | Adiciona dashboard_url aos registros existentes |
+| src/pages/Settings.tsx | Inclui dashboard_url no save/preset/fetch |
+
+**Nota importante**: A extensao Chrome (codigo no GitHub) tambem precisa ser atualizada para ler `dashboard_url` do settings_json em vez de usar URL hardcoded. Essa alteracao e feita no repositorio da extensao, fora deste projeto.
+
