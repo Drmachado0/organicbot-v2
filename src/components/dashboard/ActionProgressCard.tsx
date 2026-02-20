@@ -5,12 +5,13 @@ import type { TodayAction } from "@/hooks/useDashboardV2";
 
 interface Props {
   todayActions: TodayAction[];
+  limits?: { follow: number; unfollow: number; like: number };
   isLoading: boolean;
 }
 
-const LIMITS = {
+const DEFAULT_LIMITS = {
   follow: 150,
-  unfollow: 120,
+  unfollow: 100,
   like: 300,
 };
 
@@ -41,7 +42,8 @@ const ACTION_CONFIG = [
   },
 ];
 
-export function ActionProgressCard({ todayActions, isLoading }: Props) {
+export function ActionProgressCard({ todayActions, limits, isLoading }: Props) {
+  const LIMITS = { ...DEFAULT_LIMITS, ...limits };
   const getCount = (key: string) =>
     todayActions.find((a) => a.action_type.toLowerCase() === key)?.count ?? 0;
 

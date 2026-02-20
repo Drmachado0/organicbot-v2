@@ -75,6 +75,12 @@ export interface BotCommand {
   result?: Record<string, unknown> | null;
 }
 
+export interface DailyLimits {
+  follow: number;
+  unfollow: number;
+  like: number;
+}
+
 export interface DashboardData {
   accounts: DashboardAccount[];
   activeAccountId: string | null;
@@ -91,6 +97,7 @@ export interface DashboardData {
   whitelistPreview: WhitelistRow[];
   automationPaused: boolean;
   recentCommands: BotCommand[];
+  dailyLimits: DailyLimits;
   isLoading: boolean;
   error: string | null;
   toggleBot: () => Promise<void>;
@@ -113,6 +120,7 @@ export function useDashboardV2(): DashboardData {
   const [whitelistPreview, setWhitelistPreview] = useState<WhitelistRow[]>([]);
   const [automationPaused, setAutomationPaused] = useState(false);
   const [recentCommands, setRecentCommands] = useState<BotCommand[]>([]);
+  const [dailyLimits, setDailyLimits] = useState<DailyLimits>({ follow: 150, unfollow: 100, like: 300 });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -166,7 +174,7 @@ export function useDashboardV2(): DashboardData {
         supabase.from("targeting_campaigns").select("id, name, is_active, niche").eq("user_id", user.id).eq("is_active", true).limit(10),
         supabase.from("whitelist").select("id, username, added_at").eq("user_id", user.id).order("added_at", { ascending: false }).limit(3),
         supabase.from("whitelist").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-        supabase.from("user_settings").select("automation_paused").eq("user_id", user.id).limit(1).maybeSingle(),
+        supabase.from("user_settings").select("automation_paused, settings_json").eq("user_id", user.id).limit(1).maybeSingle(),
         accountId
           ? supabase.from("bot_commands").select("id, command, status, created_at, executed_at, params, result").eq("ig_account_id", accountId).order("created_at", { ascending: false }).limit(10)
           : Promise.resolve({ data: [], error: null }),
@@ -223,6 +231,15 @@ export function useDashboardV2(): DashboardData {
       setWhitelistPreview((whitelistRes.data as WhitelistRow[]) || []);
       setWhitelistCount(whitelistCountRes.count || 0);
       setAutomationPaused(settingsRes.data?.automation_paused ?? false);
+      // Extract daily limits from settings_json
+      const sj = settingsRes.data?.settings_json as Record<string, unknown> | null;
+      if (sj) {
+        setDailyLimits({
+          follow: Number(sj.follow_daily_limit ?? 150),
+          unfollow: Number(sj.unfollow_daily_limit ?? 100),
+          like: Number(sj.like_daily_limit ?? 300),
+        });
+      }
       setRecentCommands((commandsRes.data as BotCommand[]) || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados");
@@ -353,6 +370,7 @@ export function useDashboardV2(): DashboardData {
     whitelistPreview,
     automationPaused,
     recentCommands,
+    dailyLimits,
     isLoading,
     error,
     toggleBot,
