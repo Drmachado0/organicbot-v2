@@ -322,6 +322,13 @@ export function useDashboardV2(): DashboardData {
 
       setAutomationPaused(newPaused);
 
+      // Send sync_settings so extension re-reads state
+      await supabase.rpc("send_bot_command", {
+        p_ig_account_id: activeAccountId,
+        p_command: "sync_settings",
+        p_params: {},
+      });
+
       // Refresh commands list
       const { data } = await supabase
         .from("bot_commands")
