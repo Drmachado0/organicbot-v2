@@ -151,6 +151,9 @@ export default function QueuePage() {
   const [importOpen, setImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  const [importFilterPrivate, setImportFilterPrivate] = useState(true);
+  const [importFilterNoPhoto, setImportFilterNoPhoto] = useState(true);
+  const [importFilterStats, setImportFilterStats] = useState<{ total: number; removedPrivate: number; removedNoPhoto: number } | null>(null);
   const [manualText, setManualText] = useState("");
   const [hashtagInput, setHashtagInput] = useState("");
   const [locationInput, setLocationInput] = useState("");
@@ -374,30 +377,57 @@ export default function QueuePage() {
   const parseFileContent = (text: string): string => {
     try {
       const parsed = JSON.parse(text);
-      const usernames: string[] = [];
+      const allUsernames: string[] = [];
+      let countPrivate = 0;
+      let countNoPhoto = 0;
       if (Array.isArray(parsed)) {
         parsed.forEach((item: any) => {
           const uname = typeof item === "string" ? item : item?.username;
           if (uname) {
-            usernames.push(uname);
+            allUsernames.push(uname);
             if (typeof item === "object") {
               const { username, ...rest } = item;
               importJsonItemsRef.current[uname] = rest;
+              if (item.is_private === true || item.is_private === "true") countPrivate++;
+              const picUrl = item.profile_pic_url ?? "";
+              if (!picUrl || picUrl.includes("default") || picUrl === "") countNoPhoto++;
             }
           }
         });
       } else if (typeof parsed === "object" && parsed !== null) {
-        usernames.push(...Object.keys(parsed));
+        allUsernames.push(...Object.keys(parsed));
       }
-      if (usernames.length > 0) return usernames.join("\n");
+      if (allUsernames.length > 0) {
+        setImportFilterStats({ total: allUsernames.length, removedPrivate: countPrivate, removedNoPhoto: countNoPhoto });
+        return allUsernames.join("\n");
+      }
     } catch {
       // Not JSON — fall through to text parsing
+      setImportFilterStats(null);
     }
     return text;
   };
 
+  // Compute filtered import count
+  const importUsernames = useMemo(() => {
+    const all = importText.split("\n").map((u) => u.trim().replace(/^@/, "")).filter(Boolean);
+    const jsonItems = importJsonItemsRef.current;
+    const hasDetails = Object.keys(jsonItems).length > 0;
+    if (!hasDetails) return all;
+    return all.filter((uname) => {
+      const details = jsonItems[uname] as any;
+      if (!details) return true;
+      if (importFilterPrivate && (details.is_private === true || details.is_private === "true")) return false;
+      if (importFilterNoPhoto) {
+        const pic = details.profile_pic_url ?? "";
+        if (!pic || pic.includes("default")) return false;
+      }
+      return true;
+    });
+  }, [importText, importFilterPrivate, importFilterNoPhoto]);
+
   const handleImport = async () => {
-    const usernames = importText.split("\n").map((u) => u.trim().replace(/^@/, "")).filter(Boolean);
+    const usernames = importUsernames;
     if (!usernames.length || !accountId) return;
 
     // Check if we have JSON details to attach
@@ -1111,7 +1141,7 @@ export default function QueuePage() {
       </div>
 
       {/* ── Import Modal ── */}
-      <Dialog open={importOpen} onOpenChange={(open) => { setImportOpen(open); if (!open) { setImportText(""); importJsonItemsRef.current = {}; } }}>
+      <Dialog open={importOpen} onOpenChange={(open) => { setImportOpen(open); if (!open) { setImportText(""); importJsonItemsRef.current = {}; setImportFilterStats(null); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">Importar Lista de Targets</DialogTitle>
@@ -1180,14 +1210,38 @@ export default function QueuePage() {
               )}
             </div>
 
+            {/* Auto-filter options for JSON imports */}
+            {importFilterStats && (
+              <div className="space-y-2 rounded-lg border border-border bg-secondary/50 p-3">
+                <p className="text-[10px] font-medium text-foreground">Filtros automáticos</p>
+                <div className="flex items-center gap-2">
+                  <Checkbox id="import-filter-private" checked={importFilterPrivate} onCheckedChange={(v) => setImportFilterPrivate(!!v)} />
+                  <label htmlFor="import-filter-private" className="text-[11px] text-muted-foreground cursor-pointer">
+                    Remover contas privadas <span className="text-destructive font-medium">({importFilterStats.removedPrivate})</span>
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox id="import-filter-nophoto" checked={importFilterNoPhoto} onCheckedChange={(v) => setImportFilterNoPhoto(!!v)} />
+                  <label htmlFor="import-filter-nophoto" className="text-[11px] text-muted-foreground cursor-pointer">
+                    Remover perfis sem foto <span className="text-destructive font-medium">({importFilterStats.removedNoPhoto})</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between">
               <p className="text-[10px] text-muted-foreground">
                 <span className="font-semibold text-foreground">
-                  {importText.split("\n").filter((u) => u.trim()).length}
+                  {importUsernames.length}
                 </span>{" "}
-                username(s) detectado(s)
+                username(s) após filtros
+                {importFilterStats && importUsernames.length < importFilterStats.total && (
+                  <span className="text-destructive ml-1">
+                    ({importFilterStats.total - importUsernames.length} removido{importFilterStats.total - importUsernames.length > 1 ? "s" : ""})
+                  </span>
+                )}
               </p>
-              {importText.split("\n").filter((u) => u.trim()).length > 0 && (
+              {importUsernames.length > 0 && (
                 <p className="text-[10px] text-primary">Pronto para importar</p>
               )}
             </div>
@@ -1197,11 +1251,11 @@ export default function QueuePage() {
             <Button
               size="sm"
               onClick={handleImport}
-              disabled={!importText.trim()}
+              disabled={importUsernames.length === 0}
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Upload className="w-3.5 h-3.5" />
-              Importar {importText.split("\n").filter((u) => u.trim()).length > 0 ? `(${importText.split("\n").filter((u) => u.trim()).length})` : ""}
+              Importar {importUsernames.length > 0 ? `(${importUsernames.length})` : ""}
             </Button>
           </DialogFooter>
         </DialogContent>
