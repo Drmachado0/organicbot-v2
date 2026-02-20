@@ -1,75 +1,72 @@
 
-# Sincronizar Configuracoes da Fila com Settings e Extensao
 
-## Problema
+# Sincronizacao Completa: App ↔ Extensao
 
-A secao "Configuracoes" na pagina de Fila (/queue) tem apenas um campo "Delay entre acoes" que salva um valor `wait_after_action` isolado no `user_settings.settings_json`. Esse valor:
-- Nao e lido pela extensao (a extensao le `delay_min`/`delay_max` da tabela `ig_accounts`)
-- Nao reflete os valores configurados na pagina Settings
-- Nao faz a escrita dupla (dual-write) para `ig_accounts`
+## Problema Atual
 
-Resultado: o usuario configura delays na Settings, mas a Queue mostra um valor diferente e desconectado.
+O sistema tem **3 pontos** onde configuracoes sao salvas, cada um com comportamento diferente:
+
+1. **Settings page** (`save()`): faz dual-write (user_settings + ig_accounts) mas **NAO envia `sync_settings` automaticamente** -- o usuario precisa clicar manualmente em "Forcar sync agora"
+2. **Queue page** (configuracoes): faz dual-write + envia `sync_settings` (corrigido na sessao anterior)
+3. **Dashboard** (presets de seguranca via Settings): mesma logica da Settings page -- sem auto-sync
+
+Resultado: o usuario salva configuracoes e acha que a extensao ja esta usando, mas ela so le quando faz polling periodico (ate 45s) ou quando recebe o comando `sync_settings`.
 
 ## Solucao
 
-Substituir a secao "Configuracoes" da Queue page por uma versao que:
-1. Le os valores reais do `user_settings.settings_json` (mesma fonte que a Settings page)
-2. Exibe os campos mais relevantes para o contexto de fila (delay min/max, limite de follows por dia, max acoes por sessao)
-3. Ao salvar, faz a mesma escrita dupla (user_settings + ig_accounts) que a Settings page
-4. Envia comando `sync_settings` para a extensao apos salvar
+### 1. Settings page -- auto-sync apos salvar
 
-## Alteracoes
+Na funcao `save()` (linha ~947 de Settings.tsx), apos o dual-write bem sucedido, enviar automaticamente o comando `sync_settings` para **todas as contas ativas** do usuario. Isso elimina a necessidade de clicar manualmente no botao "Forcar sync agora".
 
-### 1. Pagina Queue (`src/pages/Queue.tsx`)
+Logica a adicionar apos linha 971:
+- Buscar todas as contas ativas do usuario
+- Para cada conta, chamar `send_bot_command` com `sync_settings`
+- Toast de sucesso ja inclui menssagem de sincronizacao
 
-**Adicionar estado para configuracoes reais:**
-- Carregar `settings_json` do `user_settings` ao montar (junto com o loadQueue)
-- Armazenar em estado local: `delay_min`, `delay_max`, `follow_daily_limit`, `max_actions_per_session`
+### 2. Manter o botao "Forcar sync agora" como fallback
 
-**Substituir secao Configuracoes (linhas 756-795):**
-Trocar o campo unico "Delay entre acoes" por 4 campos inline editaveis:
-- Delay min (s) -- campo numerico
-- Delay max (s) -- campo numerico
-- Follows/dia -- campo numerico
-- Max acoes/sessao -- campo numerico
+O botao na secao ExtensionSyncSection continua existindo para casos onde o usuario quer forcar um re-sync sem salvar (ex: extensao reiniciou).
 
-Cada campo mostra o valor atual vindo do `user_settings`.
+### 3. Duplicata de useEffect no Queue.tsx
 
-**Botao Salvar na secao:**
-Ao salvar:
-1. Faz merge dos campos editados no `settings_json` existente via `upsert` em `user_settings`
-2. Faz `update` nos campos correspondentes da `ig_accounts` (dual-write: `delay_min`, `delay_max`)
-3. Envia comando `sync_settings` via `send_bot_command` para a extensao processar imediatamente
+Ha um `useEffect` duplicado no Queue.tsx (linhas 234 e 236-238) que chama `loadQueue()` duas vezes. Sera removido.
 
-**Remover** o campo `delayValue` (estado local isolado) e a logica de save atual que so grava `wait_after_action`.
+## Detalhes Tecnicos
 
-### 2. Nenhuma alteracao em outros arquivos
+### Arquivo: `src/pages/Settings.tsx`
 
-A logica de escrita dupla sera replicada inline na Queue page, seguindo o mesmo padrao da funcao `save()` em Settings.tsx. Isso garante que qualquer alteracao feita na Queue page aparece corretamente tanto na Settings page quanto na extensao.
+Na funcao `save()` (~linha 947-980):
+- Apos o dual-write (user_settings + ig_accounts) com sucesso
+- Buscar `ig_accounts` ativas do usuario: `supabase.from("ig_accounts").select("id").eq("user_id", user.id).eq("is_active", true)`
+- Para cada conta, enviar: `supabase.rpc("send_bot_command", { p_ig_account_id: acc.id, p_command: "sync_settings", p_params: {} })`
+- Atualizar toast para: "Configuracoes salvas e sincronizadas!"
 
-## Fluxo apos a alteracao
+### Arquivo: `src/pages/Queue.tsx`
+
+- Remover `useEffect` duplicado nas linhas 236-238 (ja coberto pela linha 234)
+
+## Fluxo Resultante
 
 ```text
-Usuario edita delay na Queue page
+Usuario altera config em QUALQUER pagina (Settings, Queue, Dashboard)
         |
         v
-Salva em user_settings.settings_json (merge)
+Salva em user_settings.settings_json
         |
         v
-Atualiza ig_accounts (delay_min, delay_max) -- dual-write
+Dual-write para ig_accounts (delay_min, delay_max, bot_mode, etc.)
         |
         v
-Envia comando sync_settings para extensao
+Envia sync_settings automaticamente para todas as contas
         |
         v
-Extensao le ig_accounts e aplica novos valores
+Extensao recebe comando e rele ig_accounts imediatamente
 ```
 
-## Campos exibidos na secao Configuracoes da Queue
+## Resumo das Alteracoes
 
-| Campo | Fonte | Dual-write para ig_accounts |
-|---|---|---|
-| Delay min (s) | settings_json.delay_min | sim (delay_min) |
-| Delay max (s) | settings_json.delay_max | sim (delay_max) |
-| Follows/dia | settings_json.follow_daily_limit | nao (lido do settings_json pelo dashboard) |
-| Max acoes/sessao | settings_json.max_actions_per_session | sim (max_actions_per_session) |
+| Arquivo | O que muda |
+|---|---|
+| `src/pages/Settings.tsx` | Adicionar auto-sync_settings na funcao save() |
+| `src/pages/Queue.tsx` | Remover useEffect duplicado (linha 236-238) |
+
