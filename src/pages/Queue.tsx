@@ -57,6 +57,7 @@ import {
   Lock,
   BadgeCheck,
   ImageOff,
+  Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
@@ -260,6 +261,24 @@ export default function QueuePage() {
   }, [user, accountId]);
 
   useEffect(() => { loadQueue(); loadSettings(); }, [loadQueue, loadSettings]);
+
+  // ── Campaign progress stats ──────────────────────────────────────────────
+  const campaignProgress = useMemo(() => {
+    const map: Record<string, { name: string; done: number; total: number }> = {};
+    for (const row of allRows) {
+      if (!row.campaign_id) continue;
+      if (!map[row.campaign_id]) {
+        map[row.campaign_id] = {
+          name: campaignNames[row.campaign_id] ?? "Sem nome",
+          done: 0,
+          total: 0,
+        };
+      }
+      map[row.campaign_id].total++;
+      if (row.status === "done") map[row.campaign_id].done++;
+    }
+    return Object.entries(map).map(([id, v]) => ({ id, ...v }));
+  }, [allRows, campaignNames]);
 
   // ── Apply account type filters to pending rows ───────────────────────────
   const filteredPendingRows = useMemo(() => {
@@ -729,6 +748,42 @@ export default function QueuePage() {
                 </AlertDialog>
               </div>
             </div>
+
+            {/* PROGRESSO POR CAMPANHA */}
+            {campaignProgress.length > 0 && (
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Target className="w-3.5 h-3.5 text-primary" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Progresso por Campanha</p>
+                </div>
+                <div className="space-y-3">
+                  {campaignProgress.map((cp) => {
+                    const pct = cp.total > 0 ? Math.round((cp.done / cp.total) * 100) : 0;
+                    return (
+                      <div key={cp.id}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-medium text-foreground truncate">{cp.name}</span>
+                          <span className="text-[10px] text-muted-foreground ml-2 flex-shrink-0">
+                            {cp.done}/{cp.total} ({pct}%)
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-secondary overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${pct}%`,
+                              background: pct === 100
+                                ? "hsl(var(--primary))"
+                                : "linear-gradient(90deg, hsl(var(--primary) / 0.7), hsl(var(--primary)))",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* FILTROS (colapsível) */}
             <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
