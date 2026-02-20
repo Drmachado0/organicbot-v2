@@ -224,22 +224,22 @@ export default function QueuePage() {
 
     // Fetch campaign names for any campaign_ids found
     const campaignIds = [...new Set(rows.map((r) => r.campaign_id).filter(Boolean))] as string[];
+    const names: Record<string, string> = {};
     if (campaignIds.length > 0) {
       const { data: camps } = await supabase
         .from("targeting_campaigns")
         .select("id, name")
         .in("id", campaignIds);
       if (camps) {
-        const names: Record<string, string> = {};
         for (const c of camps) names[c.id] = c.name;
-        setCampaignNames(names);
       }
     }
+    setCampaignNames(names);
 
-    // Attach campaign_name to rows
+    // Attach campaign_name using local `names` (avoids stale state)
     const enriched = rows.map((r) => ({
       ...r,
-      campaign_name: r.campaign_id ? campaignNames[r.campaign_id] ?? null : null,
+      campaign_name: r.campaign_id ? names[r.campaign_id] ?? null : null,
     }));
 
     setAllRows(enriched);

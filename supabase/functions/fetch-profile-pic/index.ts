@@ -12,10 +12,55 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // ── Auth: validate JWT and extract user ──
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const supabaseAuth = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } }
+    );
+
+    const token = authHeader.replace("Bearer ", "");
+    const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getClaims(token);
+    if (claimsError || !claimsData?.claims) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const userId = claimsData.claims.sub;
+
     const { ig_account_id, username } = await req.json();
     if (!ig_account_id || !username) {
       return new Response(JSON.stringify({ error: "ig_account_id and username required" }), {
         status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ── Ownership check: verify user owns this ig_account ──
+    const supabaseAdmin = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+
+    const { data: account } = await supabaseAdmin
+      .from("ig_accounts")
+      .select("id")
+      .eq("id", ig_account_id)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (!account) {
+      return new Response(JSON.stringify({ error: "Account not found or not owned by user" }), {
+        status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -46,12 +91,7 @@ Deno.serve(async (req) => {
     }
 
     // Update the database
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
-
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from("ig_accounts")
       .update({ profile_pic_url: profilePicUrl })
       .eq("id", ig_account_id);
