@@ -65,26 +65,68 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Try fetching profile pic from Instagram's public page
-    const igRes = await fetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "X-IG-App-ID": "936619743392459",
-      },
-    });
+    // Try multiple methods to fetch profile pic
+    let profilePicUrl: string | null = null;
 
-    if (!igRes.ok) {
-      return new Response(JSON.stringify({ error: "Instagram API returned " + igRes.status }), {
-        status: 502,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Method 1: Try the ?__a=1&__d=dis endpoint
+    try {
+      const igRes1 = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/?__a=1&__d=dis`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "Accept": "*/*",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Sec-Fetch-Site": "same-origin",
+          "Sec-Fetch-Mode": "cors",
+          "Sec-Fetch-Dest": "empty",
+          "X-IG-App-ID": "936619743392459",
+          "X-Requested-With": "XMLHttpRequest",
+        },
       });
+      if (igRes1.ok) {
+        const d1 = await igRes1.json();
+        profilePicUrl = d1?.graphql?.user?.profile_pic_url_hd || d1?.graphql?.user?.profile_pic_url || null;
+      }
+    } catch { /* ignore */ }
+
+    // Method 2: Try web_profile_info endpoint
+    if (!profilePicUrl) {
+      try {
+        const igRes2 = await fetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "X-IG-App-ID": "936619743392459",
+            "Accept": "*/*",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        if (igRes2.ok) {
+          const d2 = await igRes2.json();
+          profilePicUrl = d2?.data?.user?.profile_pic_url_hd || d2?.data?.user?.profile_pic_url || null;
+        }
+      } catch { /* ignore */ }
     }
 
-    const igData = await igRes.json();
-    const profilePicUrl = igData?.data?.user?.profile_pic_url_hd || igData?.data?.user?.profile_pic_url;
+    // Method 3: Scrape the HTML page for og:image meta tag
+    if (!profilePicUrl) {
+      try {
+        const igRes3 = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/`, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+            "Accept": "text/html",
+          },
+        });
+        if (igRes3.ok) {
+          const html = await igRes3.text();
+          const ogMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/);
+          if (ogMatch?.[1]) {
+            profilePicUrl = ogMatch[1].replace(/&amp;/g, "&");
+          }
+        }
+      } catch { /* ignore */ }
+    }
 
     if (!profilePicUrl) {
-      return new Response(JSON.stringify({ error: "Could not extract profile pic URL" }), {
+      return new Response(JSON.stringify({ error: "Could not extract profile pic URL from any method" }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
