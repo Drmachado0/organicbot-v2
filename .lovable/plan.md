@@ -1,61 +1,51 @@
 
+# Sincronizar Configuracoes com o Dashboard
 
-# Remover Dados Ficticios do Dashboard
+## Problema Identificado
 
-## Problema
+O componente `ActionProgressCard` no dashboard usa limites fixos no codigo:
 
-O componente `LiveStatusBar` exibe dois dados inventados que nao vem da extensao:
+```text
+follow: 150
+unfollow: 120
+like: 300
+```
 
-1. **Countdown falso** ("Proxima acao em 47s") -- um timer que decrementa localmente e reseta com valor aleatorio, sem nenhuma relacao com a extensao real
-2. **Duracao de sessao falsa** ("Rodando ha Xm Xs") -- um contador que incrementa a partir de zero toda vez que a pagina carrega, sem usar dados reais de sessao
+Quando o usuario altera esses limites na aba Configuracoes (ou aplica um preset de seguranca como "Conta Nova" com follow=40/dia), o dashboard continua exibindo os valores antigos hardcoded. A barra de progresso e a porcentagem ficam incorretas.
 
-Todos os outros componentes do dashboard (KPI cards, graficos, tabelas de sessoes, log de acoes, campanhas, whitelist, alertas de saude) ja usam exclusivamente dados reais vindos do Supabase.
+## Analise das Configuracoes
 
----
+Todas as configuracoes da aba Settings estao sendo salvas corretamente em dois lugares:
+- `user_settings.settings_json` -- armazena todos os parametros (limites, filtros, delays, schedule)
+- `ig_accounts` -- recebe os campos criticos que a extensao le (delay_min, delay_max, bot_mode, likes_per_follow, max_actions_per_session, bot_schedule)
 
-## O que muda
+A escrita dupla (dual-write) esta funcionando. O problema e apenas que o dashboard nao le os limites salvos.
 
-### Arquivo: `src/components/dashboard/LiveStatusBar.tsx`
+## O que sera feito
 
-1. **Remover o countdown ficticio** -- eliminar o estado `countdown` e o bloco "Proxima acao em Xs". Nao existe dado real da extensao para esse timer, entao ele sera removido completamente.
+### 1. Hook `useDashboardV2` -- buscar limites do usuario
 
-2. **Substituir sessao ficticia por dados reais** -- em vez de incrementar `sessionMs` localmente, usar o campo `last_heartbeat` da conta para calcular ha quanto tempo o bot esta online. Exibir "Ultimo heartbeat ha Xm" com o tempo real, ou esconder se o bot estiver offline.
+Adicionar ao `fetchAll` uma leitura de `user_settings.settings_json` para extrair `follow_daily_limit`, `unfollow_daily_limit` e `like_daily_limit`. Expor um novo campo `dailyLimits` no retorno do hook.
 
-3. **Remover os estados `countdown` e `sessionMs`** e o `useEffect` com `setInterval` que os alimentava.
+### 2. Componente `ActionProgressCard` -- usar limites dinamicos
 
-### Resultado visual
+Remover a constante `LIMITS` hardcoded e receber os limites como prop. Se nao houver limites configurados, usar os defaults (150/120/300) como fallback.
 
-A barra de status ficara com:
-- Indicador Online/Offline (real, via `bot_online`)
-- Modo atual (real, via `bot_mode`)
-- Tempo desde ultimo heartbeat (real, via `last_heartbeat`)
-- Badge de status da extensao (ja real)
-- Username da conta (ja real)
+### 3. Dashboard page -- passar limites
 
----
+Conectar o novo campo `dailyLimits` do hook ao `ActionProgressCard`.
 
 ## Detalhes Tecnicos
 
-O calculo do tempo de heartbeat usara `last_heartbeat` com refresh a cada 10 segundos para manter o label atualizado:
+No hook `useDashboardV2.ts`:
+- A query de `user_settings` ja existe (busca `automation_paused`), basta expandir para tambem ler `settings_json`
+- Extrair os 3 limites do JSON e expor como `{ follow: number, unfollow: number, like: number }`
 
-```typescript
-// Tick every 10s to update heartbeat label
-const [tick, setTick] = useState(0);
-useEffect(() => {
-  const id = setInterval(() => setTick(t => t + 1), 10_000);
-  return () => clearInterval(id);
-}, []);
+No componente `ActionProgressCard.tsx`:
+- Adicionar prop `limits?: { follow: number; unfollow: number; like: number }`
+- Usar `props.limits?.follow ?? 150` como fallback
 
-const heartbeatAge = account?.last_heartbeat
-  ? Math.floor((Date.now() - new Date(account.last_heartbeat).getTime()) / 1000)
-  : null;
+No `Dashboard.tsx`:
+- Passar `dailyLimits` do hook para o componente
 
-function formatHeartbeatAge(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-}
-```
-
-A secao "Proxima acao" sera completamente removida pois nao existe campo correspondente no banco de dados. A secao de duracao de sessao sera substituida por "Heartbeat ha X" usando dados reais.
-
+Nenhuma alteracao no banco de dados e necessaria -- os dados ja estao sendo salvos corretamente pela pagina Settings.
