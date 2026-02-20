@@ -1,43 +1,53 @@
 
 
-# Corrigir Importacao de Arquivos + Erro de Funcao Duplicada
+# Persistir Filtros Ativos na Fila
 
-## Problema 1: Funcao `add_targets_batch` duplicada
+## Problema
 
-Existem duas versoes da funcao no banco:
-- `add_targets_batch(p_ig_account_id, p_usernames, p_source)` (original, 3 parametros)
-- `add_targets_batch(p_ig_account_id, p_usernames, p_source, p_campaign_id)` (nova, 4 parametros)
+Os filtros "Remover privadas", "Remover sem foto", "Remover duplicatas" na secao FILTROS ATIVOS funcionam apenas no lado do cliente (memoria). Os registros nao sao removidos do banco de dados, entao ao sair da pagina e voltar, a fila mostra todos os targets originais sem filtro.
 
-Quando o codigo chama sem `p_campaign_id`, o PostgreSQL nao consegue decidir qual usar e retorna o erro mostrado na screenshot.
+## Solucao
 
-**Solucao**: Criar uma migracao SQL para dropar a versao antiga (3 parametros), mantendo apenas a versao com `p_campaign_id` (que ja tem `DEFAULT NULL`, entao funciona sem o parametro).
+Adicionar um botao **"Aplicar Filtros"** que efetivamente deleta (ou marca como `skipped`) os targets filtrados no banco de dados, tornando a alteracao permanente.
 
-```sql
-DROP FUNCTION IF EXISTS public.add_targets_batch(uuid, text[], text);
+## Alteracoes
+
+### `src/pages/Queue.tsx`
+
+1. **Adicionar botao "Aplicar Filtros"** na secao FILTROS ATIVOS que:
+   - Calcula quais targets serao removidos com base nos filtros ativos (privadas, sem foto, duplicatas, etc.)
+   - Atualiza o status desses targets para `skipped` no banco (ao inves de deletar, para manter historico)
+   - Mostra quantos serao removidos antes de confirmar
+   - Usa um `AlertDialog` de confirmacao para evitar remocao acidental
+
+2. **Logica de aplicacao dos filtros**:
+   - Coleta os IDs dos `pendingRows` que NAO passam nos filtros ativos
+   - Executa `supabase.from("target_queue").update({ status: "skipped" }).in("id", idsToRemove)`
+   - Recarrega a fila apos sucesso
+   - Mostra toast com quantidade removida
+
+3. **Indicador visual**: mostrar quantos targets serao removidos ao lado do botao (ex: "Aplicar Filtros (19 removidos)")
+
+### Detalhes tecnicos
+
+```text
+Fluxo:
+[Filtros ativos] --> [Botao "Aplicar Filtros (N removidos)"]
+     |
+     v
+[AlertDialog confirmacao] --> [UPDATE status = 'skipped' WHERE id IN (...)]
+     |
+     v
+[loadQueue() + toast sucesso]
 ```
 
-## Problema 2: Arquivo `.txt` com conteudo JSON
+A logica de calculo dos IDs a remover reutiliza o mesmo `useMemo` existente (`filteredPendingRows`), comparando com `pendingRows` para encontrar os que foram filtrados:
 
-O arquivo `admilhas_comentadores.txt` contem um array JSON com objetos tipo `{"username": "lago_filipe", ...}`, mas como a extensao e `.txt`, o parser trata como texto puro (um username por linha), o que nao funciona.
+```
+const idsToRemove = pendingRows
+  .filter(r => !filteredPendingRows.some(f => f.id === r.id))
+  .map(r => r.id);
+```
 
-**Solucao**: Alterar a logica de parsing em `Queue.tsx` para detectar JSON automaticamente, independente da extensao do arquivo. Para arquivos `.txt` e `.csv`, tentar fazer `JSON.parse()` primeiro; se funcionar, usar a mesma logica de extracao de usernames do JSON.
-
-### Alteracoes em `src/pages/Queue.tsx`
-
-Extrair a logica de parsing em uma funcao reutilizavel `parseFileContent(text)`:
-
-1. Tenta `JSON.parse(text)` primeiro
-2. Se for array de objetos com campo `username`, extrai os usernames e salva os detalhes no `importJsonItemsRef`
-3. Se falhar o parse JSON, trata como texto (um username por linha, separado por `\n` ou `,`)
-
-Aplicar essa funcao nos dois handlers: `onDrop` e `onChange` do input file, removendo a verificacao `file.name.endsWith(".json")`.
-
----
-
-## Resumo de alteracoes
-
-| Arquivo | O que muda |
-|---|---|
-| Migracao SQL | `DROP FUNCTION` da versao antiga de 3 parametros |
-| `src/pages/Queue.tsx` | Parser inteligente que detecta JSON em qualquer extensao de arquivo |
+O botao so aparece quando `idsToRemove.length > 0`.
 
