@@ -309,7 +309,7 @@ export function useDashboardV2(): DashboardData {
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "ig_accounts", filter: `id=eq.${activeAccountId}` }, (payload) => {
         const row = payload.new as DashboardAccount;
-        setAccounts((prev) => prev.map((a) => a.id === row.id ? { ...a, queue_total: row.queue_total, queue_processed: row.queue_processed, bot_online: row.bot_online, bot_status: row.bot_status } : a));
+        setAccounts((prev) => prev.map((a) => a.id === row.id ? { ...a, queue_total: row.queue_total, queue_processed: row.queue_processed, bot_online: row.bot_online, bot_status: row.bot_status, profile_pic_url: row.profile_pic_url, followers_count: row.followers_count, following_count: row.following_count, bot_mode: row.bot_mode, last_heartbeat: row.last_heartbeat } : a));
       })
       .subscribe();
 
