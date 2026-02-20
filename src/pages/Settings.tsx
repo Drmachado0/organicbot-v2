@@ -970,6 +970,25 @@ export default function BotSettings() {
       }).eq("user_id", user.id).eq("is_active", true);
       if (accountError) throw accountError;
 
+      // 3. Auto-sync: send sync_settings command to all active accounts
+      const { data: activeAccounts } = await supabase
+        .from("ig_accounts")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("is_active", true);
+
+      if (activeAccounts && activeAccounts.length > 0) {
+        await Promise.allSettled(
+          activeAccounts.map((acc) =>
+            supabase.rpc("send_bot_command", {
+              p_ig_account_id: acc.id,
+              p_command: "sync_settings",
+              p_params: {} as unknown as import("@/integrations/supabase/types").Json,
+            })
+          )
+        );
+      }
+
       toast.success("Configurações salvas e sincronizadas com a extensão!");
       setIsDirty(false);
     } catch (err) {

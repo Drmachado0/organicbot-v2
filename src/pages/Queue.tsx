@@ -233,10 +233,6 @@ export default function QueuePage() {
 
   useEffect(() => { loadQueue(); loadSettings(); }, [loadQueue, loadSettings]);
 
-  useEffect(() => {
-    loadQueue();
-  }, [loadQueue]);
-
   // ── Apply account type filters to pending rows ───────────────────────────
   const filteredPendingRows = useMemo(() => {
     let filtered = [...pendingRows];
