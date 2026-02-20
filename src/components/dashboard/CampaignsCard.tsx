@@ -32,25 +32,54 @@ export function CampaignsCard({ campaigns, isLoading }: Props) {
           <p className="text-sm text-muted-foreground">Nenhuma campanha ativa</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {campaigns.map((c) => (
-            <div
-              key={c.id}
-              className="flex items-center justify-between p-3 rounded-lg"
-              style={{ backgroundColor: "hsl(252 62% 60% / 0.08)", border: "1px solid hsl(252 62% 60% / 0.2)" }}
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground truncate">{c.name}</p>
-                {c.niche && <p className="text-xs text-muted-foreground truncate">{c.niche}</p>}
-              </div>
-              <Badge
-                className="ml-2 flex-shrink-0 text-xs"
-                style={{ backgroundColor: "hsl(152 72% 48% / 0.15)", color: "hsl(152 72% 48%)", border: "1px solid hsl(152 72% 48% / 0.3)" }}
+        <div className="space-y-3">
+          {campaigns.map((c) => {
+            const pct = c.queue_total > 0 ? Math.round((c.queue_done / c.queue_total) * 100) : 0;
+            const hasQueue = c.queue_total > 0;
+
+            return (
+              <div
+                key={c.id}
+                className="p-3 rounded-lg space-y-2"
+                style={{ backgroundColor: "hsl(252 62% 60% / 0.08)", border: "1px solid hsl(252 62% 60% / 0.2)" }}
               >
-                Ativa
-              </Badge>
-            </div>
-          ))}
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{c.name}</p>
+                    {c.niche && <p className="text-xs text-muted-foreground truncate">{c.niche}</p>}
+                  </div>
+                  <Badge
+                    className="ml-2 flex-shrink-0 text-xs"
+                    style={{ backgroundColor: "hsl(152 72% 48% / 0.15)", color: "hsl(152 72% 48%)", border: "1px solid hsl(152 72% 48% / 0.3)" }}
+                  >
+                    Ativa
+                  </Badge>
+                </div>
+
+                {hasQueue && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-muted-foreground">Progresso</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {c.queue_done}/{c.queue_total} ({pct}%)
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${pct}%`,
+                          background: pct === 100
+                            ? "hsl(152 72% 48%)"
+                            : "linear-gradient(90deg, hsl(252 62% 60% / 0.7), hsl(252 62% 60%))",
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

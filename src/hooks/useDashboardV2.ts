@@ -57,6 +57,8 @@ export interface Campaign {
   name: string;
   is_active: boolean | null;
   niche: string | null;
+  queue_done: number;
+  queue_total: number;
 }
 
 export interface WhitelistRow {
@@ -178,7 +180,7 @@ export function useDashboardV2(): DashboardData {
         accountId
           ? supabase.from("action_log").select("id, executed_at, action_type, target_username, status, details").eq("ig_account_id", accountId).order("executed_at", { ascending: false }).limit(20)
           : Promise.resolve({ data: [], error: null }),
-        supabase.from("targeting_campaigns").select("id, name, is_active, niche").eq("user_id", user.id).eq("is_active", true).limit(10),
+        supabase.from("targeting_campaigns").select("id, name, is_active, niche").eq("user_id", user.id).eq("is_active", true).limit(20),
         supabase.from("whitelist").select("id, username, added_at").eq("user_id", user.id).order("added_at", { ascending: false }).limit(3),
         supabase.from("whitelist").select("id", { count: "exact", head: true }).eq("user_id", user.id),
         supabase.from("user_settings").select("automation_paused, settings_json").eq("user_id", user.id).limit(1).maybeSingle(),
@@ -235,7 +237,29 @@ export function useDashboardV2(): DashboardData {
           details: (r.details as Record<string, unknown>) || null,
         }))
       );
-      setCampaigns((campaignsRes.data as Campaign[]) || []);
+      // Campaigns with queue progress
+      const rawCampaigns = (campaignsRes.data ?? []) as { id: string; name: string; is_active: boolean | null; niche: string | null }[];
+      if (rawCampaigns.length > 0 && accountId) {
+        const campaignIds = rawCampaigns.map((c) => c.id);
+        const { data: queueData } = await supabase
+          .from("target_queue")
+          .select("campaign_id, status")
+          .eq("ig_account_id", accountId)
+          .in("campaign_id", campaignIds);
+        const statsMap: Record<string, { done: number; total: number }> = {};
+        for (const row of (queueData ?? []) as { campaign_id: string; status: string }[]) {
+          if (!statsMap[row.campaign_id]) statsMap[row.campaign_id] = { done: 0, total: 0 };
+          statsMap[row.campaign_id].total++;
+          if (row.status === "done") statsMap[row.campaign_id].done++;
+        }
+        setCampaigns(rawCampaigns.map((c) => ({
+          ...c,
+          queue_done: statsMap[c.id]?.done ?? 0,
+          queue_total: statsMap[c.id]?.total ?? 0,
+        })));
+      } else {
+        setCampaigns(rawCampaigns.map((c) => ({ ...c, queue_done: 0, queue_total: 0 })));
+      }
       setWhitelistPreview((whitelistRes.data as WhitelistRow[]) || []);
       setWhitelistCount(whitelistCountRes.count || 0);
       setAutomationPaused(settingsRes.data?.automation_paused ?? false);
