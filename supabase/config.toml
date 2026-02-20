@@ -1,1 +1,4 @@
 project_id = "ebyruchdswmkuynthiqi"
+
+[functions.fetch-profile-pic]
+verify_jwt = false

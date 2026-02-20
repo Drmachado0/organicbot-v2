@@ -268,7 +268,17 @@ export default function Dashboard() {
             }
             delta={followersToday !== 0 ? { value: followersToday, label: "seguidores hoje" } : undefined}
             isLoading={isLoading}
-          />
+          >
+            {account?.profile_pic_url && (
+              <div className="flex items-center gap-2 mt-1">
+                <img
+                  src={account.profile_pic_url}
+                  alt={account.ig_username}
+                  className="h-8 w-8 rounded-full object-cover border border-border"
+                />
+              </div>
+            )}
+          </KpiCard>
         </section>
 
         {/* ── Row 2: Actions Area Chart ── */}

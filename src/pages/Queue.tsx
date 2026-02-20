@@ -671,6 +671,10 @@ export default function QueuePage() {
                   <RefreshCw className={cn("w-3 h-3", loadingCmd === "sync_settings" && "animate-spin")} />
                   Re-detectar
                 </Button>
+                <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => sendCmd("update_profile_pic")} disabled={loadingCmd === "update_profile_pic"}>
+                  <RefreshCw className={cn("w-3 h-3", loadingCmd === "update_profile_pic" && "animate-spin")} />
+                  Atualizar Foto
+                </Button>
                 <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => sendCmd("collect_via_api")} disabled={loadingCmd === "collect_via_api"}>
                   <Zap className="w-3 h-3" />
                   API
