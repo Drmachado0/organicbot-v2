@@ -86,6 +86,8 @@ interface TargetRow {
   created_at: string | null;
   processed_at: string | null;
   details: Record<string, unknown> | null;
+  campaign_id: string | null;
+  campaign_name?: string | null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -96,6 +98,7 @@ const SOURCE_LABELS: Record<string, string> = {
   following: "Seguindo",
   hashtag: "Hashtag",
   location: "Localização",
+  campaign: "Campanha",
 };
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -104,6 +107,7 @@ const SOURCE_COLORS: Record<string, string> = {
   following: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30",
   hashtag: "bg-orange-500/20 text-orange-400 border-orange-500/30",
   location: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+  campaign: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -199,19 +203,43 @@ export default function QueuePage() {
 
   // ── Load queue counts & rows ─────────────────────────────────────────────
 
+  // Campaign name cache
+  const [campaignNames, setCampaignNames] = useState<Record<string, string>>({});
+
   const loadQueue = useCallback(async () => {
     if (!accountId) return;
     const { data } = await supabase
       .from("target_queue")
-      .select("id, username, source, status, priority, created_at, processed_at, details")
+      .select("id, username, source, status, priority, created_at, processed_at, details, campaign_id")
       .eq("ig_account_id", accountId)
       .order("priority", { ascending: false })
       .order("created_at", { ascending: true })
       .limit(1000);
 
     const rows = (data ?? []) as TargetRow[];
-    setAllRows(rows);
-    const pending = rows.filter((r) => r.status === "pending" || r.status === "injected");
+
+    // Fetch campaign names for any campaign_ids found
+    const campaignIds = [...new Set(rows.map((r) => r.campaign_id).filter(Boolean))] as string[];
+    if (campaignIds.length > 0) {
+      const { data: camps } = await supabase
+        .from("targeting_campaigns")
+        .select("id, name")
+        .in("id", campaignIds);
+      if (camps) {
+        const names: Record<string, string> = {};
+        for (const c of camps) names[c.id] = c.name;
+        setCampaignNames(names);
+      }
+    }
+
+    // Attach campaign_name to rows
+    const enriched = rows.map((r) => ({
+      ...r,
+      campaign_name: r.campaign_id ? campaignNames[r.campaign_id] ?? null : null,
+    }));
+
+    setAllRows(enriched);
+    const pending = enriched.filter((r) => r.status === "pending" || r.status === "injected");
     setPendingRows(pending);
   }, [accountId]);
 
@@ -909,9 +937,9 @@ export default function QueuePage() {
                 <thead className="sticky top-0 bg-card border-b border-border z-10">
                   <tr>
                     <th className="text-left px-3 py-2.5 text-muted-foreground font-medium w-48">Username</th>
+                    <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Campanha</th>
                     <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Fonte</th>
                     <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Status</th>
-                    <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Prioridade</th>
                     <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Adicionado</th>
                     <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Processado</th>
                     <th className="px-3 py-2.5 w-10" />
@@ -920,7 +948,7 @@ export default function QueuePage() {
                 <tbody>
                   {pagedRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center text-muted-foreground py-12">
+                      <td colSpan={8} className="text-center text-muted-foreground py-12">
                         Nenhum target encontrado.
                       </td>
                     </tr>
@@ -944,6 +972,11 @@ export default function QueuePage() {
                             })()}
                           </span>
                         </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {row.campaign_id && campaignNames[row.campaign_id]
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded-full border bg-emerald-500/20 text-emerald-400 border-emerald-500/30">{campaignNames[row.campaign_id]}</span>
+                            : "—"}
+                        </td>
                         <td className="px-3 py-2">
                           <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border", SOURCE_COLORS[row.source ?? "manual"] ?? SOURCE_COLORS.manual)}>
                             {SOURCE_LABELS[row.source ?? "manual"] ?? row.source}
@@ -954,7 +987,6 @@ export default function QueuePage() {
                             {row.status ?? "pending"}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-muted-foreground">{row.priority ?? 0}</td>
                         <td className="px-3 py-2 text-muted-foreground">
                           {row.created_at ? formatDistanceToNow(new Date(row.created_at), { addSuffix: true, locale: ptBR }) : "—"}
                         </td>
