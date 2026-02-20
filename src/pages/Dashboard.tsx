@@ -47,6 +47,8 @@ export default function Dashboard() {
     dailyHistory,
     growthHistory,
     pendingQueueCount,
+    queueDoneCount,
+    queueTotalCount,
     sessions,
     recentActions,
     campaigns,
@@ -240,8 +242,8 @@ export default function Dashboard() {
             badge={pendingQueueCount > 500 ? { label: "Alta", variant: "destructive" } : undefined}
             isLoading={isLoading}
             progress={
-              account?.queue_total && account.queue_total > 0
-                ? { current: account.queue_processed ?? 0, total: account.queue_total }
+              queueTotalCount > 0
+                ? { current: queueDoneCount, total: queueTotalCount }
                 : undefined
             }
           />

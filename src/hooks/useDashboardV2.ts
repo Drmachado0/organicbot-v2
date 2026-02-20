@@ -90,6 +90,8 @@ export interface DashboardData {
   dailyHistory: DailyActionPoint[];
   growthHistory: GrowthPoint[];
   pendingQueueCount: number;
+  queueDoneCount: number;
+  queueTotalCount: number;
   sessions: SessionRow[];
   recentActions: ActionLogRow[];
   campaigns: Campaign[];
@@ -113,6 +115,7 @@ export function useDashboardV2(): DashboardData {
   const [dailyHistory, setDailyHistory] = useState<DailyActionPoint[]>([]);
   const [growthHistory, setGrowthHistory] = useState<GrowthPoint[]>([]);
   const [pendingQueueCount, setPendingQueueCount] = useState(0);
+  const [queueDoneCount, setQueueDoneCount] = useState(0);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [recentActions, setRecentActions] = useState<ActionLogRow[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -143,6 +146,7 @@ export function useDashboardV2(): DashboardData {
         dailyHistoryRes,
         growthRes,
         queueRes,
+        queueDoneRes,
         sessionsRes,
         actionsRes,
         campaignsRes,
@@ -164,6 +168,9 @@ export function useDashboardV2(): DashboardData {
           : Promise.resolve({ data: [], error: null }),
         accountId
           ? supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", accountId).eq("status", "pending")
+          : Promise.resolve({ data: [], count: 0, error: null }),
+        accountId
+          ? supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", accountId).eq("status", "done")
           : Promise.resolve({ data: [], count: 0, error: null }),
         accountId
           ? supabase.from("session_stats").select("id, session_start, session_end, follows_count, unfollows_count, likes_count, errors_count").eq("ig_account_id", accountId).order("session_end", { ascending: false }).limit(5)
@@ -220,6 +227,7 @@ export function useDashboardV2(): DashboardData {
       }
 
       setPendingQueueCount(queueRes.count || 0);
+      setQueueDoneCount(queueDoneRes.count || 0);
       setSessions((sessionsRes.data as SessionRow[]) || []);
       setRecentActions(
         ((actionsRes.data || []) as { id: string; executed_at: string | null; action_type: string; target_username: string | null; status: string; details: unknown }[]).map((r) => ({
@@ -363,6 +371,8 @@ export function useDashboardV2(): DashboardData {
     dailyHistory,
     growthHistory,
     pendingQueueCount,
+    queueDoneCount,
+    queueTotalCount: pendingQueueCount + queueDoneCount,
     sessions,
     recentActions,
     campaigns,
