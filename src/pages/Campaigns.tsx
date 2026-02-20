@@ -329,6 +329,18 @@ function TargetQueuePanel({ userId }: { userId: string }) {
     if (selectedId) loadStats(selectedId);
   }, [selectedId, loadStats]);
 
+  // Realtime subscription to update stats when extension processes targets
+  useEffect(() => {
+    if (!selectedId) return;
+    const channel = supabase
+      .channel(`campaign-queue-${selectedId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${selectedId}` }, () => {
+        loadStats(selectedId);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [selectedId, loadStats]);
+
   const handleClear = async () => {
     if (!selectedId) return;
     setClearing(true);
