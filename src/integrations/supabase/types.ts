@@ -592,24 +592,15 @@ export type Database = {
       }
     }
     Functions: {
-      add_targets_batch:
-        | {
-            Args: {
-              p_ig_account_id: string
-              p_source?: string
-              p_usernames: string[]
-            }
-            Returns: number
-          }
-        | {
-            Args: {
-              p_campaign_id?: string
-              p_ig_account_id: string
-              p_source?: string
-              p_usernames: string[]
-            }
-            Returns: number
-          }
+      add_targets_batch: {
+        Args: {
+          p_campaign_id?: string
+          p_ig_account_id: string
+          p_source?: string
+          p_usernames: string[]
+        }
+        Returns: number
+      }
       auto_provision_ig_account: {
         Args: { p_device_id: string; p_ig_username: string }
         Returns: string

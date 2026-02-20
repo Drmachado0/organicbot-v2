@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS public.add_targets_batch(uuid, text[], text);
