@@ -1,53 +1,53 @@
 
-
-# Persistir Filtros Ativos na Fila
+# Puxar Imagem do Perfil Instagram
 
 ## Problema
-
-Os filtros "Remover privadas", "Remover sem foto", "Remover duplicatas" na secao FILTROS ATIVOS funcionam apenas no lado do cliente (memoria). Os registros nao sao removidos do banco de dados, entao ao sair da pagina e voltar, a fila mostra todos os targets originais sem filtro.
+O campo `profile_pic_url` esta `null` para todas as contas no banco de dados. O codigo ja exibe a foto quando o campo tem valor (ja implementado em Queue.tsx e AccountCardsPanel.tsx), mas nenhum mecanismo popula esse campo.
 
 ## Solucao
+Adicionar um botao "Atualizar Foto" que envia o comando `update_profile_pic` para a extensao via RPC `send_bot_command`, e tambem adicionar uma opcao de buscar a foto diretamente via a API publica do Instagram (endpoint `/{username}/?__a=1` ou proxy) como fallback.
 
-Adicionar um botao **"Aplicar Filtros"** que efetivamente deleta (ou marca como `skipped`) os targets filtrados no banco de dados, tornando a alteracao permanente.
+### Abordagem em 2 frentes:
 
-## Alteracoes
+**1. Comando para a extensao (principal)**
+- Adicionar botao "Atualizar Foto" no card de perfil da pagina Queue (ao lado de "Re-detectar")
+- O botao envia o comando `update_profile_pic` via `send_bot_command`
+- A extensao (fora deste codigo) deve processar esse comando e fazer `UPDATE ig_accounts SET profile_pic_url = '...' WHERE id = '...'`
 
-### `src/pages/Queue.tsx`
+**2. Fallback via Supabase Edge Function**
+- Criar uma edge function `fetch-profile-pic` que usa a API publica do Instagram para buscar a foto de perfil
+- Endpoint: `https://www.instagram.com/api/v1/users/web_profile_info/?username={username}`
+- Salva a URL retornada no campo `profile_pic_url` da tabela `ig_accounts`
+- Botao "Buscar foto" como alternativa caso a extensao nao suporte o comando
 
-1. **Adicionar botao "Aplicar Filtros"** na secao FILTROS ATIVOS que:
-   - Calcula quais targets serao removidos com base nos filtros ativos (privadas, sem foto, duplicatas, etc.)
-   - Atualiza o status desses targets para `skipped` no banco (ao inves de deletar, para manter historico)
-   - Mostra quantos serao removidos antes de confirmar
-   - Usa um `AlertDialog` de confirmacao para evitar remocao acidental
+### Alteracoes nos arquivos:
 
-2. **Logica de aplicacao dos filtros**:
-   - Coleta os IDs dos `pendingRows` que NAO passam nos filtros ativos
-   - Executa `supabase.from("target_queue").update({ status: "skipped" }).in("id", idsToRemove)`
-   - Recarrega a fila apos sucesso
-   - Mostra toast com quantidade removida
+**`src/pages/Queue.tsx`**
+- Adicionar botao "Atualizar Foto" ao lado de "Re-detectar" no card de perfil
+- O botao envia `update_profile_pic` via `sendCmd`
 
-3. **Indicador visual**: mostrar quantos targets serao removidos ao lado do botao (ex: "Aplicar Filtros (19 removidos)")
+**`src/pages/Dashboard.tsx`** (KPI card "Status da Conta")
+- Incluir avatar do `account.profile_pic_url` no KPI card que mostra `@username`
+
+**`supabase/functions/fetch-profile-pic/index.ts`** (nova edge function)
+- Recebe `ig_account_id` e `username`
+- Tenta buscar foto via API publica do Instagram
+- Atualiza `ig_accounts.profile_pic_url`
 
 ### Detalhes tecnicos
 
 ```text
-Fluxo:
-[Filtros ativos] --> [Botao "Aplicar Filtros (N removidos)"]
+Fluxo do botao:
+[Botao "Atualizar Foto"] 
+     |
+     +--> sendCmd("update_profile_pic") --> extensao busca e salva no DB
+     |
+     +--> (fallback) fetch edge function --> API Instagram --> UPDATE ig_accounts
      |
      v
-[AlertDialog confirmacao] --> [UPDATE status = 'skipped' WHERE id IN (...)]
-     |
-     v
-[loadQueue() + toast sucesso]
+[Realtime subscription atualiza UI automaticamente]
 ```
 
-A logica de calculo dos IDs a remover reutiliza o mesmo `useMemo` existente (`filteredPendingRows`), comparando com `pendingRows` para encontrar os que foram filtrados:
+A UI ja tem realtime subscription no `AccountCardsPanel` (linha 47-83) que observa mudancas em `ig_accounts`, entao quando o `profile_pic_url` for atualizado no banco, a foto aparecera automaticamente sem reload.
 
-```
-const idsToRemove = pendingRows
-  .filter(r => !filteredPendingRows.some(f => f.id === r.id))
-  .map(r => r.id);
-```
-
-O botao so aparece quando `idsToRemove.length > 0`.
-
+**Nota**: A abordagem via API publica do Instagram pode ser bloqueada por rate-limiting. A via extensao e mais confiavel pois a extensao ja esta autenticada no Instagram.
