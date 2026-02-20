@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -81,6 +82,7 @@ interface TargetRow {
   priority: number | null;
   created_at: string | null;
   processed_at: string | null;
+  details: Record<string, unknown> | null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -131,7 +133,7 @@ export default function QueuePage() {
   const [account, setAccount] = useState<IgAccount | null>(null);
 
   // Queue data
-  const [pendingCount, setPendingCount] = useState(0);
+  // pendingCount is now derived from filteredPendingRows
   const [pendingRows, setPendingRows] = useState<TargetRow[]>([]);
   const [allRows, setAllRows] = useState<TargetRow[]>([]);
 
@@ -153,6 +155,14 @@ export default function QueuePage() {
   const [filterSource, setFilterSource] = useState("all");
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
+
+  // Account type filters
+  const [removePrivate, setRemovePrivate] = useState(false);
+  const [removePublic, setRemovePublic] = useState(false);
+  const [removeVerified, setRemoveVerified] = useState(false);
+  const [removeUnverified, setRemoveUnverified] = useState(false);
+  const [removeNoPhoto, setRemoveNoPhoto] = useState(false);
+  const [removeDuplicates, setRemoveDuplicates] = useState(true);
 
   // ── Load accounts ────────────────────────────────────────────────────────
 
@@ -184,7 +194,7 @@ export default function QueuePage() {
     if (!accountId) return;
     const { data } = await supabase
       .from("target_queue")
-      .select("id, username, source, status, priority, created_at, processed_at")
+      .select("id, username, source, status, priority, created_at, processed_at, details")
       .eq("ig_account_id", accountId)
       .order("priority", { ascending: false })
       .order("created_at", { ascending: true })
@@ -193,13 +203,37 @@ export default function QueuePage() {
     const rows = (data ?? []) as TargetRow[];
     setAllRows(rows);
     const pending = rows.filter((r) => r.status === "pending" || r.status === "injected");
-    setPendingCount(pending.length);
     setPendingRows(pending);
   }, [accountId]);
 
   useEffect(() => {
     loadQueue();
   }, [loadQueue]);
+
+  // ── Apply account type filters to pending rows ───────────────────────────
+  const filteredPendingRows = useMemo(() => {
+    let filtered = [...pendingRows];
+    if (removeDuplicates) {
+      const seen = new Set<string>();
+      filtered = filtered.filter((r) => {
+        const key = r.username.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+    if (removePrivate) filtered = filtered.filter((r) => !(r.details as any)?.is_private);
+    if (removePublic) filtered = filtered.filter((r) => (r.details as any)?.is_private !== false);
+    if (removeVerified) filtered = filtered.filter((r) => !(r.details as any)?.is_verified);
+    if (removeUnverified) filtered = filtered.filter((r) => (r.details as any)?.is_verified !== false);
+    if (removeNoPhoto) filtered = filtered.filter((r) => {
+      const url = (r.details as any)?.profile_pic_url ?? "";
+      return url && !url.includes("default");
+    });
+    return filtered;
+  }, [pendingRows, removeDuplicates, removePrivate, removePublic, removeVerified, removeUnverified, removeNoPhoto]);
+
+  const pendingCount = filteredPendingRows.length;
 
   // ── Realtime subscription ────────────────────────────────────────────────
 
@@ -250,35 +284,64 @@ export default function QueuePage() {
   // ── Export ───────────────────────────────────────────────────────────────
 
   const exportJSON = () => {
-    downloadFile(JSON.stringify(pendingRows, null, 2), "queue.json", "application/json");
+    downloadFile(JSON.stringify(filteredPendingRows, null, 2), "queue.json", "application/json");
   };
   const exportCSV = () => {
     const header = "username,source,created_at";
-    const rows = pendingRows.map((r) => `${r.username},${r.source ?? ""},${r.created_at ?? ""}`);
+    const rows = filteredPendingRows.map((r) => `${r.username},${r.source ?? ""},${r.created_at ?? ""}`);
     downloadFile([header, ...rows].join("\n"), "queue.csv", "text/csv");
   };
   const exportTXT = () => {
-    downloadFile(pendingRows.map((r) => r.username).join("\n"), "queue.txt", "text/plain");
+    downloadFile(filteredPendingRows.map((r) => r.username).join("\n"), "queue.txt", "text/plain");
   };
 
   // ── Import ───────────────────────────────────────────────────────────────
 
+  // Store parsed JSON items with details for import
+  const importJsonItemsRef = useRef<Record<string, Record<string, unknown>>>({});
+
   const handleImport = async () => {
     const usernames = importText.split("\n").map((u) => u.trim().replace(/^@/, "")).filter(Boolean);
     if (!usernames.length || !accountId) return;
-    const { data, error } = await supabase.rpc("add_targets_batch", {
-      p_ig_account_id: accountId,
-      p_usernames: usernames,
-      p_source: "manual",
-    });
-    if (error) {
-      toast({ title: "Erro ao importar", description: error.message, variant: "destructive" });
+
+    // Check if we have JSON details to attach
+    const jsonItems = importJsonItemsRef.current;
+    const hasDetails = Object.keys(jsonItems).length > 0;
+
+    if (hasDetails) {
+      // Insert directly with details
+      const rows = usernames.map((username) => ({
+        ig_account_id: accountId,
+        username,
+        source: "manual" as const,
+        details: jsonItems[username] ?? {},
+      }));
+      const { error } = await supabase.from("target_queue").insert(rows as never[]);
+      if (error) {
+        toast({ title: "Erro ao importar", description: error.message, variant: "destructive" });
+      } else {
+        toast({ title: `${usernames.length} target(s) adicionados`, description: "Fila atualizada." });
+        await sendCmd("sync_queue", {});
+        setImportText("");
+        importJsonItemsRef.current = {};
+        setImportOpen(false);
+        loadQueue();
+      }
     } else {
-      toast({ title: `${data} target(s) adicionados`, description: "Fila atualizada." });
-      await sendCmd("sync_queue", {});
-      setImportText("");
-      setImportOpen(false);
-      loadQueue();
+      const { data, error } = await supabase.rpc("add_targets_batch", {
+        p_ig_account_id: accountId,
+        p_usernames: usernames,
+        p_source: "manual",
+      });
+      if (error) {
+        toast({ title: "Erro ao importar", description: error.message, variant: "destructive" });
+      } else {
+        toast({ title: `${data} target(s) adicionados`, description: "Fila atualizada." });
+        await sendCmd("sync_queue", {});
+        setImportText("");
+        setImportOpen(false);
+        loadQueue();
+      }
     }
   };
 
@@ -582,6 +645,35 @@ export default function QueuePage() {
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="px-4 pb-4 space-y-3">
+                    {/* TIPO DE CONTA */}
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Tipo de Conta</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { id: "removePrivate", label: "Remover privadas", checked: removePrivate, set: setRemovePrivate },
+                          { id: "removePublic", label: "Remover públicas", checked: removePublic, set: setRemovePublic },
+                          { id: "removeVerified", label: "Remover verificadas", checked: removeVerified, set: setRemoveVerified },
+                          { id: "removeUnverified", label: "Remover não-verificadas", checked: removeUnverified, set: setRemoveUnverified },
+                          { id: "removeNoPhoto", label: "Remover sem foto", checked: removeNoPhoto, set: setRemoveNoPhoto },
+                          { id: "removeDuplicates", label: "Remover duplicadas", checked: removeDuplicates, set: setRemoveDuplicates },
+                        ].map((f) => (
+                          <label key={f.id} className="flex items-center gap-2 cursor-pointer group">
+                            <Checkbox
+                              id={f.id}
+                              checked={f.checked}
+                              onCheckedChange={(v) => f.set(v === true)}
+                              className="h-3.5 w-3.5 border-muted-foreground data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                            />
+                            <span className="text-[11px] text-muted-foreground group-hover:text-foreground transition-colors select-none">
+                              {f.label}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="h-px bg-border" />
+
                     <div>
                       <p className="text-xs text-muted-foreground mb-1.5">Fonte</p>
                       <div className="flex flex-wrap gap-1.5">
@@ -778,7 +870,7 @@ export default function QueuePage() {
       </div>
 
       {/* ── Import Modal ── */}
-      <Dialog open={importOpen} onOpenChange={(open) => { setImportOpen(open); if (!open) setImportText(""); }}>
+      <Dialog open={importOpen} onOpenChange={(open) => { setImportOpen(open); if (!open) { setImportText(""); importJsonItemsRef.current = {}; } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">Importar Lista de Targets</DialogTitle>
@@ -798,11 +890,21 @@ export default function QueuePage() {
                   if (file.name.endsWith(".json")) {
                     try {
                       const parsed = JSON.parse(text);
-                      const usernames: string[] = Array.isArray(parsed)
-                        ? parsed.map((item: unknown) =>
-                            typeof item === "string" ? item : (item as Record<string, string>)?.username ?? ""
-                          ).filter(Boolean)
-                        : Object.keys(parsed);
+                      const usernames: string[] = [];
+                      if (Array.isArray(parsed)) {
+                        parsed.forEach((item: any) => {
+                          const uname = typeof item === "string" ? item : item?.username;
+                          if (uname) {
+                            usernames.push(uname);
+                            if (typeof item === "object") {
+                              const { username, ...rest } = item;
+                              importJsonItemsRef.current[uname] = rest;
+                            }
+                          }
+                        });
+                      } else {
+                        usernames.push(...Object.keys(parsed));
+                      }
                       setImportText((prev) => [prev, usernames.join("\n")].filter(Boolean).join("\n"));
                     } catch {
                       setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
@@ -827,11 +929,21 @@ export default function QueuePage() {
                     if (file.name.endsWith(".json")) {
                       try {
                         const parsed = JSON.parse(text);
-                        const usernames: string[] = Array.isArray(parsed)
-                          ? parsed.map((item: unknown) =>
-                              typeof item === "string" ? item : (item as Record<string, string>)?.username ?? ""
-                            ).filter(Boolean)
-                          : Object.keys(parsed);
+                        const usernames: string[] = [];
+                        if (Array.isArray(parsed)) {
+                          parsed.forEach((item: any) => {
+                            const uname = typeof item === "string" ? item : item?.username;
+                            if (uname) {
+                              usernames.push(uname);
+                              if (typeof item === "object") {
+                                const { username, ...rest } = item;
+                                importJsonItemsRef.current[uname] = rest;
+                              }
+                            }
+                          });
+                        } else {
+                          usernames.push(...Object.keys(parsed));
+                        }
                         setImportText((prev) => [prev, usernames.join("\n")].filter(Boolean).join("\n"));
                       } catch {
                         setImportText((prev) => [prev, text].filter(Boolean).join("\n"));
