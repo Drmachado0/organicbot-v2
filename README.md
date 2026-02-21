@@ -1,3 +1,5 @@
+EU SOU BONITÃO E GOSTOSÃO
+
 # Welcome to your Lovable project
 
 ## Project info
