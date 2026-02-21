@@ -175,7 +175,7 @@ export function useDashboardV2(): DashboardData {
           ? supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", accountId).eq("status", "done")
           : Promise.resolve({ data: [], count: 0, error: null }),
         accountId
-          ? supabase.from("session_stats").select("id, session_start, session_end, follows_count, unfollows_count, likes_count, errors_count").eq("ig_account_id", accountId).order("session_end", { ascending: false }).limit(5)
+          ? supabase.from("session_stats").select("id, session_start, session_end, follows_count, unfollows_count, likes_count, errors_count").eq("ig_account_id", accountId).order("session_end", { ascending: false }).limit(50)
           : Promise.resolve({ data: [], error: null }),
         accountId
           ? supabase.from("action_log").select("id, executed_at, action_type, target_username, status, details").eq("ig_account_id", accountId).order("executed_at", { ascending: false }).limit(20)
@@ -230,7 +230,17 @@ export function useDashboardV2(): DashboardData {
 
       setPendingQueueCount(queueRes.count || 0);
       setQueueDoneCount(queueDoneRes.count || 0);
-      setSessions((sessionsRes.data as SessionRow[]) || []);
+      // Deduplicate sessions by session_start (extension may insert multiple rows per session)
+      const rawSessions = (sessionsRes.data as SessionRow[]) || [];
+      const sessionMap = new Map<string, SessionRow>();
+      for (const s of rawSessions) {
+        const key = s.session_start ?? s.id;
+        const existing = sessionMap.get(key);
+        if (!existing || (s.session_end && (!existing.session_end || s.session_end > existing.session_end))) {
+          sessionMap.set(key, s);
+        }
+      }
+      setSessions(Array.from(sessionMap.values()));
       setRecentActions(
         ((actionsRes.data || []) as { id: string; executed_at: string | null; action_type: string; target_username: string | null; status: string; details: unknown }[]).map((r) => ({
           ...r,
