@@ -30,6 +30,12 @@ import {
   Zap,
 } from "lucide-react";
 
+interface CampaignQueueStats {
+  pending: number;
+  processing: number;
+  done: number;
+}
+
 interface Campaign {
   id: string;
   name: string;
@@ -40,8 +46,7 @@ interface Campaign {
   is_active: boolean;
   created_at: string;
   ig_account_id: string | null;
-  queue_pending: number;
-  queue_done: number;
+  queue: CampaignQueueStats;
 }
 
 interface TagInputProps {
@@ -117,6 +122,20 @@ const EMPTY_FORM = {
   is_active: false,
 };
 
+// ─── Helper: group queue rows by campaign_id ─────────────────────────────────
+
+function buildQueueStatsMap(rows: { campaign_id: string | null; status: string }[]): Record<string, CampaignQueueStats> {
+  const map: Record<string, CampaignQueueStats> = {};
+  for (const r of rows) {
+    const key = r.campaign_id ?? "__none__";
+    if (!map[key]) map[key] = { pending: 0, processing: 0, done: 0 };
+    if (r.status === "pending" || r.status === "injected") map[key].pending++;
+    else if (r.status === "processing") map[key].processing++;
+    else if (r.status === "done") map[key].done++;
+  }
+  return map;
+}
+
 // ─── Inject Targets Modal ────────────────────────────────────────────────────
 
 interface InjectModalProps {
@@ -145,7 +164,6 @@ function InjectModal({ campaign, igAccountId, onClose, onInjected }: InjectModal
       const added = typeof data === "number" ? data : 0;
       const skipped = totalTargets - added;
 
-      // Auto-sync: force extension to pick up new targets immediately
       await supabase.rpc("send_bot_command", {
         p_ig_account_id: igAccountId,
         p_command: "sync_queue",
@@ -174,7 +192,6 @@ function InjectModal({ campaign, igAccountId, onClose, onInjected }: InjectModal
         className="glass-card rounded-2xl p-6 w-full max-w-md space-y-5 animate-fade-in"
         style={{ border: "1px solid hsl(152 72% 48% / 0.3)" }}
       >
-        {/* Header */}
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -185,15 +202,11 @@ function InjectModal({ campaign, igAccountId, onClose, onInjected }: InjectModal
               Adicionar concorrentes da campanha à fila de targets
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-          >
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Campaign info */}
         <div
           className="rounded-xl p-3 space-y-1.5"
           style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(220 18% 18%)" }}
@@ -204,11 +217,7 @@ function InjectModal({ campaign, igAccountId, onClose, onInjected }: InjectModal
               <p className="text-xs text-muted-foreground">Nenhum concorrente configurado nesta campanha</p>
             ) : (
               campaign.competitors.map((c) => (
-                <Badge
-                  key={c}
-                  className="text-xs"
-                  style={{ backgroundColor: "hsl(42 96% 56% / 0.12)", color: "hsl(42 96% 56%)", border: "1px solid hsl(42 96% 56% / 0.25)" }}
-                >
+                <Badge key={c} className="text-xs" style={{ backgroundColor: "hsl(42 96% 56% / 0.12)", color: "hsl(42 96% 56%)", border: "1px solid hsl(42 96% 56% / 0.25)" }}>
                   @{c}
                 </Badge>
               ))
@@ -221,11 +230,8 @@ function InjectModal({ campaign, igAccountId, onClose, onInjected }: InjectModal
           )}
         </div>
 
-        {/* Actions */}
         <div className="flex gap-2 pt-1">
-          <Button variant="ghost" size="sm" onClick={onClose} className="flex-1 h-9">
-            Cancelar
-          </Button>
+          <Button variant="ghost" size="sm" onClick={onClose} className="flex-1 h-9">Cancelar</Button>
           <Button
             size="sm"
             onClick={handleInject}
@@ -233,11 +239,7 @@ function InjectModal({ campaign, igAccountId, onClose, onInjected }: InjectModal
             className="flex-1 h-9 gap-1.5 font-semibold"
             style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}
           >
-            {isInjecting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Zap className="h-3.5 w-3.5" />
-            )}
+            {isInjecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
             {isInjecting ? "Injetando…" : "Injetar Targets"}
           </Button>
         </div>
@@ -246,47 +248,32 @@ function InjectModal({ campaign, igAccountId, onClose, onInjected }: InjectModal
   );
 }
 
-// ─── Target Queue Panel ─────────────────────────────────────────────────────
+// ─── Global Queue Panel ─────────────────────────────────────────────────────
 
-interface QueueStats {
-  pending: number;
-  processing: number;
-  done: number;
-}
-
-function TargetQueuePanel({ igAccountId }: { igAccountId: string }) {
-  const [stats, setStats] = useState<QueueStats | null>(null);
-  const [loadingStats, setLoadingStats] = useState(false);
+function GlobalQueuePanel({ igAccountId, refreshKey }: { igAccountId: string; refreshKey: number }) {
+  const [stats, setStats] = useState<{ pending: number; processing: number; done: number } | null>(null);
+  const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
 
   const loadStats = useCallback(async () => {
     if (!igAccountId) return;
-    setLoadingStats(true);
+    setLoading(true);
     const [pendingRes, processingRes, doneRes] = await Promise.all([
       supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", igAccountId).in("status", ["pending", "injected"]),
       supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", igAccountId).eq("status", "processing"),
       supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", igAccountId).eq("status", "done"),
     ]);
-    setStats({
-      pending: pendingRes.count ?? 0,
-      processing: processingRes.count ?? 0,
-      done: doneRes.count ?? 0,
-    });
-    setLoadingStats(false);
+    setStats({ pending: pendingRes.count ?? 0, processing: processingRes.count ?? 0, done: doneRes.count ?? 0 });
+    setLoading(false);
   }, [igAccountId]);
 
-  useEffect(() => {
-    loadStats();
-  }, [loadStats]);
+  useEffect(() => { loadStats(); }, [loadStats, refreshKey]);
 
-  // Realtime subscription to update stats when extension processes targets
   useEffect(() => {
     if (!igAccountId) return;
     const channel = supabase
-      .channel(`campaign-queue-${igAccountId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${igAccountId}` }, () => {
-        loadStats();
-      })
+      .channel(`global-queue-${igAccountId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${igAccountId}` }, () => loadStats())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [igAccountId, loadStats]);
@@ -307,27 +294,18 @@ function TargetQueuePanel({ igAccountId }: { igAccountId: string }) {
   };
 
   return (
-    <div
-      className="glass-card rounded-2xl p-5 space-y-4 animate-fade-in"
-      style={{ border: "1px solid hsl(252 62% 60% / 0.2)" }}
-    >
+    <div className="glass-card rounded-2xl p-5 space-y-4 animate-fade-in" style={{ border: "1px solid hsl(252 62% 60% / 0.2)" }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ListOrdered className="h-4 w-4" style={{ color: "hsl(252 62% 60%)" }} />
-          <p className="text-sm font-semibold">Fila de Targets</p>
+          <p className="text-sm font-semibold">Fila Global de Targets</p>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-muted-foreground hover:text-foreground"
-          onClick={() => loadStats()}
-          disabled={loadingStats}
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loadingStats ? "animate-spin" : ""}`} />
+        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => loadStats()} disabled={loading}>
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
         </Button>
       </div>
 
-      {loadingStats || !stats ? (
+      {loading || !stats ? (
         <div className="grid grid-cols-3 gap-3">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
         </div>
@@ -338,11 +316,7 @@ function TargetQueuePanel({ igAccountId }: { igAccountId: string }) {
             { label: "Processando", value: stats.processing, color: "hsl(252 62% 60%)" },
             { label: "Concluídos", value: stats.done, color: "hsl(152 72% 48%)" },
           ].map(({ label, value, color }) => (
-            <div
-              key={label}
-              className="rounded-xl p-3 text-center"
-              style={{ backgroundColor: "hsl(220 18% 10%)", border: `1px solid ${color}/20` }}
-            >
+            <div key={label} className="rounded-xl p-3 text-center" style={{ backgroundColor: "hsl(220 18% 10%)", border: `1px solid ${color}20` }}>
               <p className="text-xl font-bold tabular-nums" style={{ color }}>{value.toLocaleString()}</p>
               <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
             </div>
@@ -355,19 +329,20 @@ function TargetQueuePanel({ igAccountId }: { igAccountId: string }) {
           {stats ? `Total: ${(stats.pending + stats.processing + stats.done).toLocaleString()} targets` : ""}
         </p>
         <Button
-          variant="ghost"
-          size="sm"
+          variant="ghost" size="sm"
           className="h-8 gap-1.5 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
           onClick={handleClear}
           disabled={clearing || !stats || stats.pending + stats.processing === 0}
         >
           {clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eraser className="h-3.5 w-3.5" />}
-          Limpar fila
+          Limpar toda a fila
         </Button>
       </div>
     </div>
   );
 }
+
+// ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function Campaigns() {
   const { user } = useAuth();
@@ -399,105 +374,73 @@ export default function Campaigns() {
       });
   }, [user]);
 
+  // Load campaigns + queue stats grouped by campaign_id
   const load = useCallback(async () => {
     if (!user || !selectedAccountId) return;
     setIsLoading(true);
 
-    // Fetch campaigns filtered by ig_account_id
-    const { data: campData, error } = await supabase
-      .from("targeting_campaigns")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("ig_account_id", selectedAccountId)
-      .order("created_at", { ascending: false });
+    const [campRes, queueRes] = await Promise.all([
+      supabase
+        .from("targeting_campaigns")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("ig_account_id", selectedAccountId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("target_queue")
+        .select("campaign_id, status")
+        .eq("ig_account_id", selectedAccountId),
+    ]);
 
-    if (error) {
+    if (campRes.error) {
       toast.error("Erro ao carregar campanhas");
       setIsLoading(false);
       return;
     }
 
-    const rawCampaigns = (campData ?? []).map((c) => ({
-      ...c,
-      hashtags: Array.isArray(c.hashtags) ? (c.hashtags as string[]) : [],
-      competitors: Array.isArray(c.competitors) ? (c.competitors as string[]) : [],
-      niche: c.niche ?? null,
-      location: c.location ?? null,
-      ig_account_id: c.ig_account_id ?? null,
-      queue_pending: 0,
-      queue_done: 0,
-    }));
+    const statsMap = buildQueueStatsMap((queueRes.data ?? []) as { campaign_id: string | null; status: string }[]);
 
-    // Fetch queue stats per campaign
-    if (rawCampaigns.length > 0) {
-      const campaignIds = rawCampaigns.map((c) => c.id);
-      const [pendingRes, doneRes] = await Promise.all([
-        supabase
-          .from("target_queue")
-          .select("campaign_id", { count: "exact" })
-          .eq("ig_account_id", selectedAccountId)
-          .in("campaign_id", campaignIds)
-          .in("status", ["pending", "injected"]),
-        supabase
-          .from("target_queue")
-          .select("campaign_id", { count: "exact" })
-          .eq("ig_account_id", selectedAccountId)
-          .in("campaign_id", campaignIds)
-          .eq("status", "done"),
-      ]);
-
-      // Count per campaign from raw data
-      const pendingMap: Record<string, number> = {};
-      const doneMap: Record<string, number> = {};
-      (pendingRes.data ?? []).forEach((r: any) => {
-        pendingMap[r.campaign_id] = (pendingMap[r.campaign_id] || 0) + 1;
-      });
-      (doneRes.data ?? []).forEach((r: any) => {
-        doneMap[r.campaign_id] = (doneMap[r.campaign_id] || 0) + 1;
-      });
-
-      rawCampaigns.forEach((c) => {
-        c.queue_pending = pendingMap[c.id] || 0;
-        c.queue_done = doneMap[c.id] || 0;
-      });
-    }
-
-    setCampaigns(rawCampaigns);
+    setCampaigns(
+      (campRes.data ?? []).map((c) => ({
+        ...c,
+        hashtags: Array.isArray(c.hashtags) ? (c.hashtags as string[]) : [],
+        competitors: Array.isArray(c.competitors) ? (c.competitors as string[]) : [],
+        niche: c.niche ?? null,
+        location: c.location ?? null,
+        ig_account_id: c.ig_account_id ?? null,
+        queue: statsMap[c.id] ?? { pending: 0, processing: 0, done: 0 },
+      }))
+    );
     setIsLoading(false);
   }, [user, selectedAccountId]);
 
   useEffect(() => { load(); }, [load]);
 
-  const openNew = () => {
-    setEditId(null);
-    setForm({ ...EMPTY_FORM });
-    setShowForm(true);
-  };
+  // Realtime: targeting_campaigns + target_queue changes → reload
+  useEffect(() => {
+    if (!selectedAccountId || !user) return;
+    const channel = supabase
+      .channel(`campaigns-rt-${selectedAccountId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "targeting_campaigns", filter: `ig_account_id=eq.${selectedAccountId}` }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${selectedAccountId}` }, () => load())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [selectedAccountId, user, load]);
+
+  const openNew = () => { setEditId(null); setForm({ ...EMPTY_FORM }); setShowForm(true); };
 
   const openEdit = (c: Campaign) => {
     setEditId(c.id);
-    setForm({
-      name: c.name,
-      niche: c.niche ?? "",
-      location: c.location ?? "",
-      hashtags: [...c.hashtags],
-      competitors: [...c.competitors],
-      is_active: c.is_active,
-    });
+    setForm({ name: c.name, niche: c.niche ?? "", location: c.location ?? "", hashtags: [...c.hashtags], competitors: [...c.competitors], is_active: c.is_active });
     setShowForm(true);
     setExpandedId(null);
   };
 
-  const cancel = () => {
-    setShowForm(false);
-    setEditId(null);
-    setForm({ ...EMPTY_FORM });
-  };
+  const cancel = () => { setShowForm(false); setEditId(null); setForm({ ...EMPTY_FORM }); };
 
   const save = async () => {
     if (!user || !selectedAccountId) return;
     if (!form.name.trim()) { toast.error("Nome da campanha é obrigatório"); return; }
-
     setIsSaving(true);
     try {
       const payload = {
@@ -510,22 +453,15 @@ export default function Campaigns() {
         user_id: user.id,
         ig_account_id: selectedAccountId,
       };
-
       if (editId) {
-        const { error } = await supabase
-          .from("targeting_campaigns")
-          .update({ ...payload, updated_at: new Date().toISOString() })
-          .eq("id", editId);
+        const { error } = await supabase.from("targeting_campaigns").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", editId);
         if (error) throw error;
         toast.success("Campanha atualizada!");
       } else {
-        const { error } = await supabase
-          .from("targeting_campaigns")
-          .insert(payload);
+        const { error } = await supabase.from("targeting_campaigns").insert(payload);
         if (error) throw error;
         toast.success("Campanha criada!");
       }
-
       cancel();
       load();
     } catch (err) {
@@ -536,14 +472,9 @@ export default function Campaigns() {
   };
 
   const toggleActive = async (c: Campaign) => {
-    const { error } = await supabase
-      .from("targeting_campaigns")
-      .update({ is_active: !c.is_active, updated_at: new Date().toISOString() })
-      .eq("id", c.id);
+    const { error } = await supabase.from("targeting_campaigns").update({ is_active: !c.is_active, updated_at: new Date().toISOString() }).eq("id", c.id);
     if (error) { toast.error("Erro ao atualizar status"); return; }
-    setCampaigns((prev) =>
-      prev.map((x) => (x.id === c.id ? { ...x, is_active: !x.is_active } : x))
-    );
+    setCampaigns((prev) => prev.map((x) => (x.id === c.id ? { ...x, is_active: !x.is_active } : x)));
     toast.success(!c.is_active ? "Campanha ativada" : "Campanha desativada");
   };
 
@@ -555,265 +486,161 @@ export default function Campaigns() {
     toast.success("Campanha excluída");
   };
 
+  const clearCampaignQueue = async (campaignId: string) => {
+    if (!selectedAccountId) return;
+    const { error, count } = await supabase
+      .from("target_queue")
+      .delete({ count: "exact" })
+      .eq("campaign_id", campaignId)
+      .eq("ig_account_id", selectedAccountId);
+    if (error) { toast.error("Erro ao limpar fila da campanha"); return; }
+    toast.success(`${count ?? 0} targets removidos da fila desta campanha`);
+    setQueueRefreshKey((k) => k + 1);
+    load();
+  };
+
   const activeCampaigns = campaigns.filter((c) => c.is_active);
   const inactiveCampaigns = campaigns.filter((c) => !c.is_active);
 
   return (
     <AppShell>
       <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between animate-fade-in">
-        <div className="flex items-center gap-2">
-          <Target className="h-5 w-5" style={{ color: "hsl(152 72% 48%)" }} />
-          <h1 className="text-xl font-bold tracking-tight">Campanhas de Targeting</h1>
+        {/* Page header */}
+        <div className="flex items-center justify-between animate-fade-in">
+          <div className="flex items-center gap-2">
+            <Target className="h-5 w-5" style={{ color: "hsl(152 72% 48%)" }} />
+            <h1 className="text-xl font-bold tracking-tight">Campanhas de Targeting</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            {accounts.length > 1 && (
+              <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                <SelectTrigger className="h-9 text-xs w-40 glass-card border-border/60">
+                  <SelectValue placeholder="Conta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {accounts.length === 1 && (
+              <span className="text-xs text-muted-foreground">@{accounts[0]?.ig_username}</span>
+            )}
+            {!showForm && (
+              <Button onClick={openNew} className="gap-1.5 h-9 font-semibold" style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }} disabled={!selectedAccountId}>
+                <Plus className="h-4 w-4" /> Nova Campanha
+              </Button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Account selector */}
-          {accounts.length > 1 && (
-            <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-              <SelectTrigger className="h-9 text-xs w-40 glass-card border-border/60">
-                <SelectValue placeholder="Conta" />
-              </SelectTrigger>
-              <SelectContent>
-                {accounts.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {accounts.length === 1 && (
-            <span className="text-xs text-muted-foreground">@{accounts[0]?.ig_username}</span>
-          )}
-          {!showForm && (
-            <Button
-              onClick={openNew}
-              className="gap-1.5 h-9 font-semibold"
-              style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}
-              disabled={!selectedAccountId}
-            >
-              <Plus className="h-4 w-4" />
-              Nova Campanha
+
+        {/* No account */}
+        {!selectedAccountId && !isLoading && accounts.length === 0 && (
+          <div className="glass-card rounded-2xl p-12 text-center animate-fade-in space-y-4">
+            <div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center" style={{ backgroundColor: "hsl(42 96% 56% / 0.1)" }}>
+              <Users className="h-7 w-7" style={{ color: "hsl(42 96% 56%)" }} />
+            </div>
+            <div>
+              <p className="font-semibold">Nenhuma conta Instagram vinculada</p>
+              <p className="text-sm text-muted-foreground mt-1">Vincule uma conta Instagram para criar campanhas de targeting.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Form */}
+        {showForm && selectedAccountId && (
+          <div className="glass-card rounded-2xl p-6 mb-6 animate-fade-in space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-base">{editId ? "Editar Campanha" : "Nova Campanha"}</h2>
+              <button onClick={cancel} className="text-muted-foreground hover:text-foreground transition-colors"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-sm text-muted-foreground">Nome da Campanha <span className="text-destructive">*</span></Label>
+                <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Ex: Nicho Fitness Brasil" className="bg-secondary/50 border-border/60 focus:border-primary h-9 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm text-muted-foreground">Nicho</Label>
+                <Input value={form.niche} onChange={(e) => setForm((f) => ({ ...f, niche: e.target.value }))} placeholder="Ex: fitness, nutrição, lifestyle" className="bg-secondary/50 border-border/60 focus:border-primary h-9 text-sm" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm text-muted-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Localização</Label>
+              <Input value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} placeholder="Ex: São Paulo, Brasil" className="bg-secondary/50 border-border/60 focus:border-primary h-9 text-sm max-w-sm" />
+            </div>
+            <TagInput label="Hashtags" icon={<Hash className="h-3.5 w-3.5" />} tags={form.hashtags} placeholder="#fitness #saude" prefix="#" onChange={(tags) => setForm((f) => ({ ...f, hashtags: tags }))} />
+            <TagInput label="Concorrentes / Perfis-alvo" icon={<Users className="h-3.5 w-3.5" />} tags={form.competitors} placeholder="@concorrente" prefix="@" onChange={(tags) => setForm((f) => ({ ...f, competitors: tags }))} />
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border/40">
+              <button type="button" onClick={() => setForm((f) => ({ ...f, is_active: !f.is_active }))} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                {form.is_active ? <ToggleRight className="h-5 w-5" style={{ color: "hsl(152 72% 48%)" }} /> : <ToggleLeft className="h-5 w-5" />}
+                <span>{form.is_active ? "Campanha ativa" : "Campanha inativa"}</span>
+              </button>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={cancel} className="h-8 text-sm">Cancelar</Button>
+                <Button size="sm" onClick={save} disabled={isSaving} className="h-8 gap-1.5 font-semibold" style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}>
+                  {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  {editId ? "Salvar alterações" : "Criar campanha"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Loading */}
+        {isLoading && selectedAccountId && (
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+          </div>
+        )}
+
+        {/* Empty */}
+        {!isLoading && campaigns.length === 0 && !showForm && selectedAccountId && (
+          <div className="glass-card rounded-2xl p-12 text-center animate-fade-in space-y-4">
+            <div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center" style={{ backgroundColor: "hsl(152 72% 48% / 0.1)" }}>
+              <Target className="h-7 w-7" style={{ color: "hsl(152 72% 48%)" }} />
+            </div>
+            <div>
+              <p className="font-semibold">Nenhuma campanha criada</p>
+              <p className="text-sm text-muted-foreground mt-1">Crie campanhas com hashtags, concorrentes e localização para segmentar seus targets.</p>
+            </div>
+            <Button onClick={openNew} className="gap-1.5 font-semibold" style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}>
+              <Plus className="h-4 w-4" /> Criar primeira campanha
             </Button>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Campaign list */}
+        {!isLoading && campaigns.length > 0 && (
+          <div className="space-y-6">
+            {activeCampaigns.length > 0 && (
+              <section className="space-y-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium px-1">Ativas ({activeCampaigns.length})</p>
+                <div className="space-y-2">
+                  {activeCampaigns.map((c) => (
+                    <CampaignRow key={c.id} campaign={c} isExpanded={expandedId === c.id} onToggleExpand={() => setExpandedId(expandedId === c.id ? null : c.id)} onEdit={() => openEdit(c)} onDelete={() => deleteCampaign(c.id)} onToggleActive={() => toggleActive(c)} onInject={() => setInjectCampaign(c)} onClearQueue={() => clearCampaignQueue(c.id)} />
+                  ))}
+                </div>
+              </section>
+            )}
+            {inactiveCampaigns.length > 0 && (
+              <section className="space-y-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium px-1">Inativas ({inactiveCampaigns.length})</p>
+                <div className="space-y-2">
+                  {inactiveCampaigns.map((c) => (
+                    <CampaignRow key={c.id} campaign={c} isExpanded={expandedId === c.id} onToggleExpand={() => setExpandedId(expandedId === c.id ? null : c.id)} onEdit={() => openEdit(c)} onDelete={() => deleteCampaign(c.id)} onToggleActive={() => toggleActive(c)} onInject={() => setInjectCampaign(c)} onClearQueue={() => clearCampaignQueue(c.id)} />
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {/* Global Queue Panel */}
+        {selectedAccountId && <GlobalQueuePanel igAccountId={selectedAccountId} refreshKey={queueRefreshKey} />}
       </div>
 
-      {/* No account selected */}
-      {!selectedAccountId && !isLoading && accounts.length === 0 && (
-        <div className="glass-card rounded-2xl p-12 text-center animate-fade-in space-y-4">
-          <div
-            className="mx-auto w-14 h-14 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: "hsl(42 96% 56% / 0.1)" }}
-          >
-            <Users className="h-7 w-7" style={{ color: "hsl(42 96% 56%)" }} />
-          </div>
-          <div>
-            <p className="font-semibold">Nenhuma conta Instagram vinculada</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Vincule uma conta Instagram para criar campanhas de targeting.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* ── Form Panel ── */}
-      {showForm && selectedAccountId && (
-        <div className="glass-card rounded-2xl p-6 mb-6 animate-fade-in space-y-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-base">
-              {editId ? "Editar Campanha" : "Nova Campanha"}
-            </h2>
-            <button
-              onClick={cancel}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Row 1: Name + Niche */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-sm text-muted-foreground">
-                Nome da Campanha <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Ex: Nicho Fitness Brasil"
-                className="bg-secondary/50 border-border/60 focus:border-primary h-9 text-sm"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-sm text-muted-foreground">Nicho</Label>
-              <Input
-                value={form.niche}
-                onChange={(e) => setForm((f) => ({ ...f, niche: e.target.value }))}
-                placeholder="Ex: fitness, nutrição, lifestyle"
-                className="bg-secondary/50 border-border/60 focus:border-primary h-9 text-sm"
-              />
-            </div>
-          </div>
-
-          {/* Row 2: Location */}
-          <div className="space-y-2">
-            <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
-              <MapPin className="h-3.5 w-3.5" /> Localização
-            </Label>
-            <Input
-              value={form.location}
-              onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
-              placeholder="Ex: São Paulo, Brasil"
-              className="bg-secondary/50 border-border/60 focus:border-primary h-9 text-sm max-w-sm"
-            />
-          </div>
-
-          {/* Row 3: Hashtags */}
-          <TagInput
-            label="Hashtags"
-            icon={<Hash className="h-3.5 w-3.5" />}
-            tags={form.hashtags}
-            placeholder="#fitness #saude"
-            prefix="#"
-            onChange={(tags) => setForm((f) => ({ ...f, hashtags: tags }))}
-          />
-
-          {/* Row 4: Competitors */}
-          <TagInput
-            label="Concorrentes / Perfis-alvo"
-            icon={<Users className="h-3.5 w-3.5" />}
-            tags={form.competitors}
-            placeholder="@concorrente"
-            prefix="@"
-            onChange={(tags) => setForm((f) => ({ ...f, competitors: tags }))}
-          />
-
-          {/* Row 5: Active toggle + actions */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border/40">
-            <button
-              type="button"
-              onClick={() => setForm((f) => ({ ...f, is_active: !f.is_active }))}
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {form.is_active ? (
-                <ToggleRight className="h-5 w-5" style={{ color: "hsl(152 72% 48%)" }} />
-              ) : (
-                <ToggleLeft className="h-5 w-5" />
-              )}
-              <span>{form.is_active ? "Campanha ativa" : "Campanha inativa"}</span>
-            </button>
-
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={cancel} className="h-8 text-sm">
-                Cancelar
-              </Button>
-              <Button
-                size="sm"
-                onClick={save}
-                disabled={isSaving}
-                className="h-8 gap-1.5 font-semibold"
-                style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}
-              >
-                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                {editId ? "Salvar alterações" : "Criar campanha"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Loading skeletons ── */}
-      {isLoading && selectedAccountId && (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => (
-            <Skeleton key={i} className="h-16 w-full rounded-xl" />
-          ))}
-        </div>
-      )}
-
-      {/* ── Empty state ── */}
-      {!isLoading && campaigns.length === 0 && !showForm && selectedAccountId && (
-        <div className="glass-card rounded-2xl p-12 text-center animate-fade-in space-y-4">
-          <div
-            className="mx-auto w-14 h-14 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: "hsl(152 72% 48% / 0.1)" }}
-          >
-            <Target className="h-7 w-7" style={{ color: "hsl(152 72% 48%)" }} />
-          </div>
-          <div>
-            <p className="font-semibold">Nenhuma campanha criada</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Crie campanhas com hashtags, concorrentes e localização para segmentar seus targets.
-            </p>
-          </div>
-          <Button
-            onClick={openNew}
-            className="gap-1.5 font-semibold"
-            style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}
-          >
-            <Plus className="h-4 w-4" />
-            Criar primeira campanha
-          </Button>
-        </div>
-      )}
-
-      {/* ── Campaign list ── */}
-      {!isLoading && campaigns.length > 0 && (
-        <div className="space-y-6">
-          {/* Active */}
-          {activeCampaigns.length > 0 && (
-            <section className="space-y-2">
-              <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium px-1">
-                Ativas ({activeCampaigns.length})
-              </p>
-              <div className="space-y-2">
-                {activeCampaigns.map((c) => (
-                  <CampaignRow
-                    key={c.id}
-                    campaign={c}
-                    isExpanded={expandedId === c.id}
-                    onToggleExpand={() => setExpandedId(expandedId === c.id ? null : c.id)}
-                    onEdit={() => openEdit(c)}
-                    onDelete={() => deleteCampaign(c.id)}
-                    onToggleActive={() => toggleActive(c)}
-                    onInject={() => setInjectCampaign(c)}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Inactive */}
-          {inactiveCampaigns.length > 0 && (
-            <section className="space-y-2">
-              <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium px-1">
-                Inativas ({inactiveCampaigns.length})
-              </p>
-              <div className="space-y-2">
-                {inactiveCampaigns.map((c) => (
-                  <CampaignRow
-                    key={c.id}
-                    campaign={c}
-                    isExpanded={expandedId === c.id}
-                    onToggleExpand={() => setExpandedId(expandedId === c.id ? null : c.id)}
-                    onEdit={() => openEdit(c)}
-                    onDelete={() => deleteCampaign(c.id)}
-                    onToggleActive={() => toggleActive(c)}
-                    onInject={() => setInjectCampaign(c)}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
-      )}
-
-      {/* ── Target Queue Panel ── */}
-      {selectedAccountId && <TargetQueuePanel key={`${selectedAccountId}-${queueRefreshKey}`} igAccountId={selectedAccountId} />}
-
-      </div>
-
-      {/* ── Inject Modal ── */}
+      {/* Inject Modal */}
       {injectCampaign && selectedAccountId && (
         <InjectModal
           campaign={injectCampaign}
@@ -836,100 +663,71 @@ interface CampaignRowProps {
   onDelete: () => void;
   onToggleActive: () => void;
   onInject: () => void;
+  onClearQueue: () => void;
 }
 
-function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete, onToggleActive, onInject }: CampaignRowProps) {
+function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete, onToggleActive, onInject, onClearQueue }: CampaignRowProps) {
   const totalSignals = c.hashtags.length + c.competitors.length;
-  const queueTotal = c.queue_pending + c.queue_done;
+  const queueTotal = c.queue.pending + c.queue.processing + c.queue.done;
+  const queuePct = queueTotal > 0 ? Math.round((c.queue.done / queueTotal) * 100) : 0;
 
   return (
-    <div
-      className="glass-card rounded-xl overflow-hidden animate-fade-in transition-all"
-      style={c.is_active ? { borderColor: "hsl(152 72% 48% / 0.3)" } : {}}
-    >
+    <div className="glass-card rounded-xl overflow-hidden animate-fade-in transition-all" style={c.is_active ? { borderColor: "hsl(152 72% 48% / 0.3)" } : {}}>
       {/* Header row */}
       <div className="flex items-center gap-3 px-4 py-3">
-        {/* Active dot */}
-        <div
-          className={`w-2 h-2 rounded-full flex-shrink-0 ${c.is_active ? "animate-pulse" : ""}`}
-          style={{ backgroundColor: c.is_active ? "hsl(152 72% 48%)" : "hsl(220 18% 30%)" }}
-        />
-
-        {/* Name + meta */}
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${c.is_active ? "animate-pulse" : ""}`} style={{ backgroundColor: c.is_active ? "hsl(152 72% 48%)" : "hsl(220 18% 30%)" }} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="font-medium text-sm">{c.name}</p>
-            {c.niche && (
-              <Badge
-                variant="secondary"
-                className="text-xs px-1.5"
-                style={{ backgroundColor: "hsl(220 18% 18%)" }}
-              >
-                {c.niche}
-              </Badge>
-            )}
+            {c.niche && <Badge variant="secondary" className="text-xs px-1.5" style={{ backgroundColor: "hsl(220 18% 18%)" }}>{c.niche}</Badge>}
           </div>
           <div className="flex items-center gap-3 mt-0.5">
             {c.location && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                <MapPin className="h-3 w-3" />
-                {c.location}
-              </span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="h-3 w-3" />{c.location}</span>
             )}
             <span className="text-xs text-muted-foreground">
-              {c.hashtags.length} hashtag{c.hashtags.length !== 1 ? "s" : ""} ·{" "}
-              {c.competitors.length} concorrente{c.competitors.length !== 1 ? "s" : ""}
+              {c.hashtags.length} hashtag{c.hashtags.length !== 1 ? "s" : ""} · {c.competitors.length} concorrente{c.competitors.length !== 1 ? "s" : ""}
             </span>
-            {queueTotal > 0 && (
-              <span className="text-xs text-muted-foreground">
-                · Fila: {c.queue_done}/{queueTotal}
-              </span>
-            )}
           </div>
+
+          {/* Queue progress bar */}
+          {queueTotal > 0 && (
+            <div className="mt-2">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-medium" style={{ color: "hsl(42 96% 56%)" }}>{c.queue.pending} pendentes</span>
+                  {c.queue.processing > 0 && <span className="text-[10px] font-medium" style={{ color: "hsl(252 62% 60%)" }}>{c.queue.processing} processando</span>}
+                  <span className="text-[10px] font-medium" style={{ color: "hsl(152 72% 48%)" }}>{c.queue.done} concluídos</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground">{queuePct}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${queuePct}%`,
+                    background: queuePct === 100 ? "hsl(152 72% 48%)" : "linear-gradient(90deg, hsl(252 62% 60% / 0.7), hsl(252 62% 60%))",
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
         <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Inject button — only when has competitors */}
           {c.competitors.length > 0 && (
-            <button
-              onClick={onInject}
-              title="Injetar targets na fila"
-              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors"
-            >
+            <button onClick={onInject} title="Injetar targets na fila" className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors">
               <Zap className="h-3.5 w-3.5" style={{ color: "hsl(152 72% 48%)" }} />
             </button>
           )}
-          <button
-            onClick={onToggleActive}
-            title={c.is_active ? "Desativar" : "Ativar"}
-            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {c.is_active ? (
-              <ToggleRight className="h-4 w-4" style={{ color: "hsl(152 72% 48%)" }} />
-            ) : (
-              <ToggleLeft className="h-4 w-4" />
-            )}
+          <button onClick={onToggleActive} title={c.is_active ? "Desativar" : "Ativar"} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors">
+            {c.is_active ? <ToggleRight className="h-4 w-4" style={{ color: "hsl(152 72% 48%)" }} /> : <ToggleLeft className="h-4 w-4" />}
           </button>
-          <button
-            onClick={onEdit}
-            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors"
-            title="Editar"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-1.5 rounded-md text-muted-foreground hover:text-destructive transition-colors"
-            title="Excluir"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <button onClick={onEdit} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors" title="Editar"><Pencil className="h-3.5 w-3.5" /></button>
+          <button onClick={onDelete} className="p-1.5 rounded-md text-muted-foreground hover:text-destructive transition-colors" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
           {totalSignals > 0 && (
-            <button
-              onClick={onToggleExpand}
-              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors"
-            >
+            <button onClick={onToggleExpand} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors">
               {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </button>
           )}
@@ -937,55 +735,42 @@ function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete
       </div>
 
       {/* Expanded detail */}
-      {isExpanded && totalSignals > 0 && (
-        <div
-          className="px-4 pb-4 pt-2 space-y-3 border-t"
-          style={{ borderColor: "hsl(220 18% 18%)" }}
-        >
+      {isExpanded && (
+        <div className="px-4 pb-4 pt-2 space-y-3 border-t" style={{ borderColor: "hsl(220 18% 18%)" }}>
           {c.hashtags.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <Hash className="h-3 w-3" /> Hashtags
-              </p>
+              <p className="text-xs text-muted-foreground flex items-center gap-1"><Hash className="h-3 w-3" /> Hashtags</p>
               <div className="flex flex-wrap gap-1.5">
                 {c.hashtags.map((h) => (
-                  <Badge
-                    key={h}
-                    className="text-xs"
-                    style={{ backgroundColor: "hsl(252 62% 60% / 0.12)", color: "hsl(252 62% 75%)", border: "1px solid hsl(252 62% 60% / 0.25)" }}
-                  >
-                    #{h}
-                  </Badge>
+                  <Badge key={h} className="text-xs" style={{ backgroundColor: "hsl(252 62% 60% / 0.12)", color: "hsl(252 62% 75%)", border: "1px solid hsl(252 62% 60% / 0.25)" }}>#{h}</Badge>
                 ))}
               </div>
             </div>
           )}
-
           {c.competitors.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <Users className="h-3 w-3" /> Concorrentes
-              </p>
+              <p className="text-xs text-muted-foreground flex items-center gap-1"><Users className="h-3 w-3" /> Concorrentes</p>
               <div className="flex flex-wrap gap-1.5">
                 {c.competitors.map((comp) => (
-                  <Badge
-                    key={comp}
-                    className="text-xs"
-                    style={{ backgroundColor: "hsl(42 96% 56% / 0.12)", color: "hsl(42 96% 56%)", border: "1px solid hsl(42 96% 56% / 0.25)" }}
-                  >
-                    @{comp}
-                  </Badge>
+                  <Badge key={comp} className="text-xs" style={{ backgroundColor: "hsl(42 96% 56% / 0.12)", color: "hsl(42 96% 56%)", border: "1px solid hsl(42 96% 56% / 0.25)" }}>@{comp}</Badge>
                 ))}
               </div>
-              {/* Quick inject from expanded */}
-              <button
-                onClick={onInject}
-                className="mt-1 flex items-center gap-1.5 text-xs font-medium transition-colors"
-                style={{ color: "hsl(152 72% 48%)" }}
-              >
-                <Zap className="h-3 w-3" />
-                Injetar {c.competitors.length} targets na fila
+              <button onClick={onInject} className="mt-1 flex items-center gap-1.5 text-xs font-medium transition-colors" style={{ color: "hsl(152 72% 48%)" }}>
+                <Zap className="h-3 w-3" /> Injetar {c.competitors.length} targets na fila
               </button>
+            </div>
+          )}
+
+          {/* Per-campaign queue clear */}
+          {queueTotal > 0 && (
+            <div className="flex items-center justify-end pt-2 border-t border-border/20">
+              <Button
+                variant="ghost" size="sm"
+                className="h-7 gap-1.5 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={onClearQueue}
+              >
+                <Eraser className="h-3 w-3" /> Limpar fila desta campanha ({queueTotal})
+              </Button>
             </div>
           )}
         </div>
