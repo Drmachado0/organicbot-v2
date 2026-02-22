@@ -318,29 +318,6 @@ export default function ExtensionPage() {
           </Button>
         </div>
 
-        {/* ── URL Warning ── */}
-        <div
-          className="rounded-2xl p-4 flex items-start gap-3"
-          style={{ backgroundColor: "hsl(42 96% 56% / 0.08)", border: "1px solid hsl(42 96% 56% / 0.3)" }}
-        >
-          <Zap className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: "hsl(42 96% 56%)" }} />
-          <div className="space-y-1 min-w-0">
-            <p className="text-sm font-semibold" style={{ color: "hsl(42 96% 56%)" }}>⚠️ Correção Manual Necessária</p>
-            <p className="text-xs text-muted-foreground">
-              Se ao clicar em <strong>"Abrir Dashboard"</strong> na extensão você for redirecionado para{" "}
-              <code className="bg-muted/40 px-1 rounded text-red-400">organicpublic.lovable.app</code>, é preciso corrigir manualmente o arquivo{" "}
-              <code className="bg-muted/40 px-1 rounded font-semibold">lovable-config.js</code> dentro da pasta da extensão.
-            </p>
-            <div className="rounded-lg px-3 py-2 mt-1" style={{ backgroundColor: "hsl(220 18% 8%)", border: "1px solid hsl(220 18% 18%)" }}>
-              <p className="text-xs text-muted-foreground mb-1">Abra o arquivo <code className="font-semibold text-foreground">lovable-config.js</code> e substitua:</p>
-              <p className="text-xs font-mono"><span className="text-red-400 line-through">https://organicpublic.lovable.app</span></p>
-              <p className="text-xs font-mono mt-0.5">por → <span className="font-semibold" style={{ color: "hsl(152 72% 48%)" }}>{DASHBOARD_URL}</span></p>
-            </div>
-            <p className="text-xs text-muted-foreground/70 mt-1">
-              Após salvar, recarregue a extensão em <code className="bg-muted/40 px-1 rounded">chrome://extensions</code> clicando no ícone de atualizar.
-            </p>
-          </div>
-        </div>
 
 
         <div className="glass-card rounded-2xl p-5 space-y-5">
