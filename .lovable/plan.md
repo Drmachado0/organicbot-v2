@@ -1,40 +1,49 @@
 
-# Corrigir erro "safety_limits does not exist"
+
+# Corrigir erro "organic_timings does not exist"
 
 ## Problema
 
-Apos resolver o erro de `safety_preset`, os logs do Postgres mostram um novo erro:
+Os logs do Postgres mostram erros repetidos:
 
 ```
-ERROR: column ig_accounts.safety_limits does not exist
+ERROR: column ig_accounts.organic_timings does not exist
 ```
 
-A extensao Chrome esta tentando ler uma coluna `safety_limits` da tabela `ig_accounts`, mas ela nao existe.
+A extensao Chrome tenta ler/gravar `organic_timings` na tabela `ig_accounts`, mas a coluna nao existe. Mesmo padrao dos erros anteriores (`safety_preset` e `safety_limits`).
 
 ## Solucao
 
-Adicionar a coluna `safety_limits` como `jsonb` com um valor default que contenha os limites de seguranca baseados nos campos que ja existem na conta (follow_daily_limit, like_daily_limit, etc). A extensao provavelmente espera um objeto JSON com os limites consolidados.
+### 1. Migracao SQL
 
-### Migracao SQL
+Adicionar a coluna `organic_timings` como `jsonb` com um default sensato. Essa coluna provavelmente armazena os horarios em que o bot deve simular atividade organica (pausas, horarios de pico, etc).
 
 ```sql
 ALTER TABLE public.ig_accounts
-  ADD COLUMN IF NOT EXISTS safety_limits jsonb DEFAULT '{"follow_daily": 150, "unfollow_daily": 100, "like_daily": 300}'::jsonb;
+  ADD COLUMN IF NOT EXISTS organic_timings jsonb
+  DEFAULT '{"morning": true, "afternoon": true, "evening": true, "night": false}'::jsonb;
 ```
 
-### Atualizar Settings para gravar safety_limits
+### 2. Atualizar Settings para gravar organic_timings
 
-Na funcao `save()` de `src/pages/Settings.tsx`, ao salvar as configuracoes, tambem gravar o `safety_limits` com os limites atuais do usuario no formato JSON que a extensao espera.
+Na funcao `save()` de `src/pages/Settings.tsx`, ao salvar configuracoes, tambem gravar `organic_timings` no update de `ig_accounts` com base no schedule/horarios configurados pelo usuario.
 
-### Atualizar tipos TypeScript
+### 3. Varredura de erros adicionais
 
-O arquivo `src/integrations/supabase/types.ts` sera atualizado automaticamente apos a migracao.
+Apos a migracao, verificar os logs novamente para confirmar que nao ha mais colunas faltando. Se houver, serao corrigidas no mesmo ciclo.
 
 ## Detalhes tecnicos
 
+### Arquivo: nova migracao SQL
+- `ALTER TABLE public.ig_accounts ADD COLUMN IF NOT EXISTS organic_timings jsonb DEFAULT '{"morning": true, "afternoon": true, "evening": true, "night": false}'::jsonb;`
+
 ### Arquivo: `src/pages/Settings.tsx`
-- Na funcao `save()`, junto com o `safety_preset`, adicionar `safety_limits` ao update de `ig_accounts`
-- O valor sera um objeto com os limites configurados pelo usuario (ex: `{ follow_daily: settings.follow_daily_limit, like_daily: settings.like_daily_limit, ... }`)
+- Na funcao `save()`, adicionar `organic_timings` ao objeto de update de `ig_accounts`
+- Derivar os valores do `bot_schedule` existente (se houver horarios configurados, mapear para os periodos morning/afternoon/evening/night)
+
+### Tipos TypeScript
+- `src/integrations/supabase/types.ts` sera atualizado automaticamente apos a migracao
 
 ### Nenhuma mudanca na extensao
-A extensao ja tenta ler `safety_limits` -- basta que a coluna exista com dados validos.
+- A extensao ja tenta ler `organic_timings` -- basta que a coluna exista com dados validos
+
