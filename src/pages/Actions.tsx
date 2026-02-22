@@ -78,7 +78,12 @@ export default function Actions() {
     if (filterAccountId !== "all") {
       q = q.eq("ig_account_id", filterAccountId);
     } else {
-      q = q.eq("user_id", user.id);
+      const accountIds = igAccounts.map((a) => a.id);
+      if (accountIds.length > 0) {
+        q = q.in("ig_account_id", accountIds);
+      } else {
+        q = q.eq("user_id", user.id);
+      }
     }
 
     if (filterType !== "all") q = q.eq("action_type", filterType);
