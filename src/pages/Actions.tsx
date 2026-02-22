@@ -82,7 +82,10 @@ export default function Actions() {
       if (accountIds.length > 0) {
         q = q.in("ig_account_id", accountIds);
       } else {
-        q = q.eq("user_id", user.id);
+        // No accounts loaded yet — return empty
+        setActions([]);
+        setIsLoading(false);
+        return;
       }
     }
 
@@ -93,56 +96,58 @@ export default function Actions() {
     if (error) toast.error("Erro ao carregar ações");
     else setActions(p === 0 ? (data ?? []) : (prev) => [...prev, ...(data ?? [])] as ActionRow[]);
     setIsLoading(false);
-  }, [user, filterType, filterStatus, filterAccountId]);
+  }, [user, filterType, filterStatus, filterAccountId, igAccounts]);
 
   useEffect(() => { setPage(0); load(0); }, [load]);
 
   // Realtime subscription — filtra por ig_account_id (mais preciso que user_id)
   useEffect(() => {
-    if (!user) return;
+    if (!user || igAccounts.length === 0) return;
 
-    // Choose the best realtime filter: specific account or user-level
-    const realtimeFilter = filterAccountId !== "all"
-      ? `ig_account_id=eq.${filterAccountId}`
-      : `user_id=eq.${user.id}`;
+    // Realtime: subscribe per account (Supabase only supports eq filter)
+    const accountIds = filterAccountId !== "all"
+      ? [filterAccountId]
+      : igAccounts.map((a) => a.id);
 
-    const channel = supabase
-      .channel(`actions-realtime-${user.id}-${filterAccountId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "action_log", filter: realtimeFilter },
-        (payload) => {
-          const newRow = payload.new as ActionRow;
+    const channels = accountIds.map((accId) => {
+      const realtimeFilter = `ig_account_id=eq.${accId}`;
 
-          // Only show if it matches current filters
-          const matchesType = filterType === "all" || newRow.action_type === filterType;
-          const matchesStatus = filterStatus === "all" || newRow.status === filterStatus;
-          const matchesAccount = filterAccountId === "all" || newRow.ig_account_id === filterAccountId;
-          if (!matchesType || !matchesStatus || !matchesAccount) return;
+      return supabase
+        .channel(`actions-realtime-${user.id}-${accId}`)
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "action_log", filter: realtimeFilter },
+          (payload) => {
+            const newRow = payload.new as ActionRow;
 
-          setActions((prev) => {
-            const withNew = [{ ...newRow, isNew: true }, ...prev].slice(0, MAX_ACTIONS);
-            return withNew;
-          });
+            const matchesType = filterType === "all" || newRow.action_type === filterType;
+            const matchesStatus = filterStatus === "all" || newRow.status === filterStatus;
+            const matchesAccount = filterAccountId === "all" || newRow.ig_account_id === filterAccountId;
+            if (!matchesType || !matchesStatus || !matchesAccount) return;
 
-          // Remove "new" badge after 3s
-          const timer = setTimeout(() => {
-            setActions((prev) =>
-              prev.map((a) => (a.id === newRow.id ? { ...a, isNew: false } : a))
-            );
-            newBadgeTimers.current.delete(newRow.id);
-          }, 3000);
-          newBadgeTimers.current.set(newRow.id, timer);
-        }
-      )
-      .subscribe();
+            setActions((prev) => {
+              const withNew = [{ ...newRow, isNew: true }, ...prev].slice(0, MAX_ACTIONS);
+              return withNew;
+            });
+
+            const timer = setTimeout(() => {
+              setActions((prev) =>
+                prev.map((a) => (a.id === newRow.id ? { ...a, isNew: false } : a))
+              );
+              newBadgeTimers.current.delete(newRow.id);
+            }, 3000);
+            newBadgeTimers.current.set(newRow.id, timer);
+          }
+        )
+        .subscribe();
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      channels.forEach((ch) => supabase.removeChannel(ch));
       newBadgeTimers.current.forEach((t) => clearTimeout(t));
       newBadgeTimers.current.clear();
     };
-  }, [user, filterType, filterStatus, filterAccountId]);
+  }, [user, filterType, filterStatus, filterAccountId, igAccounts]);
 
   const loadMore = () => { const next = page + 1; setPage(next); load(next); };
 
