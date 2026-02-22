@@ -1,48 +1,40 @@
 
-# Corrigir erro "safety_preset does not exist" que impede a extensao de rodar
+# Corrigir erro "safety_limits does not exist"
 
-## Problema encontrado
+## Problema
 
-Os logs do Postgres mostram repetidamente:
+Apos resolver o erro de `safety_preset`, os logs do Postgres mostram um novo erro:
 
 ```
-ERROR: column ig_accounts.safety_preset does not exist
+ERROR: column ig_accounts.safety_limits does not exist
 ```
 
-A extensao Chrome esta tentando ler ou gravar uma coluna `safety_preset` na tabela `ig_accounts`, mas essa coluna nunca foi criada. Isso causa falha nas queries da extensao, impedindo-a de funcionar.
+A extensao Chrome esta tentando ler uma coluna `safety_limits` da tabela `ig_accounts`, mas ela nao existe.
 
-Alem disso, o comando `set_safety_preset` esta listado como valido no constraint de `bot_commands`, mas nao tem utilidade pratica sem a coluna correspondente.
+## Solucao
 
-## O que sera feito
+Adicionar a coluna `safety_limits` como `jsonb` com um valor default que contenha os limites de seguranca baseados nos campos que ja existem na conta (follow_daily_limit, like_daily_limit, etc). A extensao provavelmente espera um objeto JSON com os limites consolidados.
 
-### 1. Adicionar a coluna `safety_preset` na tabela `ig_accounts`
-
-Criar a coluna com valor default `'media'` (o preset intermediario), tipo `text`, nullable. Isso resolve imediatamente o erro da extensao sem precisar alterar o codigo da extensao.
+### Migracao SQL
 
 ```sql
 ALTER TABLE public.ig_accounts
-  ADD COLUMN IF NOT EXISTS safety_preset text DEFAULT 'media';
+  ADD COLUMN IF NOT EXISTS safety_limits jsonb DEFAULT '{"follow_daily": 150, "unfollow_daily": 100, "like_daily": 300}'::jsonb;
 ```
 
-### 2. Atualizar o save de Settings para gravar o preset
+### Atualizar Settings para gravar safety_limits
 
-Na pagina Settings (`src/pages/Settings.tsx`), ao salvar, tambem gravar o `safety_preset` detectado (baseado na configuracao atual) na tabela `ig_accounts`, para que a extensao possa le-lo.
+Na funcao `save()` de `src/pages/Settings.tsx`, ao salvar as configuracoes, tambem gravar o `safety_limits` com os limites atuais do usuario no formato JSON que a extensao espera.
 
-### 3. Nenhuma mudanca na extensao necessaria
+### Atualizar tipos TypeScript
 
-A extensao ja tenta ler `safety_preset` -- basta que a coluna exista para o erro parar.
-
----
+O arquivo `src/integrations/supabase/types.ts` sera atualizado automaticamente apos a migracao.
 
 ## Detalhes tecnicos
 
-### Migracao SQL
-- `ALTER TABLE public.ig_accounts ADD COLUMN IF NOT EXISTS safety_preset text DEFAULT 'media';`
-
 ### Arquivo: `src/pages/Settings.tsx`
-- Na funcao `save()`, no update de `ig_accounts` (por volta da linha 974), adicionar `safety_preset` ao objeto de update
-- Calcular o preset mais proximo usando a mesma logica de `getClosestPreset` que ja existe em Extension.tsx
-- Adicionar uma funcao helper `detectPreset(settings)` que retorna `'nova'`, `'media'` ou `'madura'`
+- Na funcao `save()`, junto com o `safety_preset`, adicionar `safety_limits` ao update de `ig_accounts`
+- O valor sera um objeto com os limites configurados pelo usuario (ex: `{ follow_daily: settings.follow_daily_limit, like_daily: settings.like_daily_limit, ... }`)
 
-### Arquivo: `src/pages/Extension.tsx`
-- Na query de `ig_accounts` (linha 142), adicionar `safety_preset` no select para exibir o preset real salvo na conta (opcional, melhora visual)
+### Nenhuma mudanca na extensao
+A extensao ja tenta ler `safety_limits` -- basta que a coluna exista com dados validos.
