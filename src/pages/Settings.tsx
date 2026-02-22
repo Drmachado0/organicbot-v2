@@ -993,6 +993,11 @@ export default function BotSettings() {
         max_actions_per_session: settings.max_actions_per_session,
         bot_schedule: botSchedule as unknown as import("@/integrations/supabase/types").Json,
         safety_preset: detectedPreset,
+        safety_limits: {
+          follow_daily: settings.follow_daily_limit,
+          unfollow_daily: Math.round(settings.follow_daily_limit * 0.7),
+          like_daily: settings.follow_daily_limit * settings.likes_per_follow,
+        } as unknown as import("@/integrations/supabase/types").Json,
         updated_at: new Date().toISOString(),
       } as any).eq("id", selectedAccountId ?? "");
       if (accountError) throw accountError;
