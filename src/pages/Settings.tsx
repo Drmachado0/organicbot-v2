@@ -953,7 +953,7 @@ export default function BotSettings() {
       setIsDirty(false);
       setIsLoading(false);
     })();
-  }, [user, selectedAccountId]);
+  }, [user]);
 
   const save = async () => {
     if (!user) return;
