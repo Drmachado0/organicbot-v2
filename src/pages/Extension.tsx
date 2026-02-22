@@ -82,7 +82,7 @@ const statusConfig = {
   offline: { label: "Extensão offline", color: "hsl(215 20% 45%)", bg: "hsl(215 20% 45% / 0.08)" },
 };
 
-const EXTENSION_VERSION = "v1.0.0";
+const EXTENSION_VERSION = "v8.1.1";
 const ZIP_URL = "https://github.com/Drmachado0/extensao/archive/refs/heads/main.zip";
 const DASHBOARD_URL = "https://organicbot.lovable.app";
 
