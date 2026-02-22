@@ -112,14 +112,14 @@ interface BotSettings {
 }
 
 const DEFAULTS: BotSettings = {
-  follow_daily_limit: 150,
-  unfollow_daily_limit: 100,
-  like_daily_limit: 300,
-  delay_min: 25,
-  delay_max: 45,
+  follow_daily_limit: 60,
+  unfollow_daily_limit: 40,
+  like_daily_limit: 120,
+  delay_min: 40,
+  delay_max: 90,
   bot_mode: "seguir_curtir",
   likes_per_follow: 2,
-  max_actions_per_session: 50,
+  max_actions_per_session: 35,
   week_schedule: DEFAULT_WEEK_SCHEDULE,
   dont_unfollow_followers: true,
   dont_unfollow_fresh: true,
@@ -183,9 +183,9 @@ const BOT_MODES = [
 ];
 
 const DEFAULT_SAFETY_PRESETS = [
-  { id: "nova", label: "🟢 Conta Nova", delayMin: 45, delayMax: 90, follows: 40, unfollows: 30, likes: 80, session: 20, desc: "< 3 meses · risco mínimo" },
-  { id: "media", label: "🟡 Conta Média", delayMin: 25, delayMax: 45, follows: 100, unfollows: 80, likes: 200, session: 50, desc: "3–12 meses · crescimento estável" },
-  { id: "madura", label: "🔴 Conta Madura", delayMin: 15, delayMax: 25, follows: 200, unfollows: 150, likes: 400, session: 100, desc: "> 12 meses · máximo crescimento" },
+  { id: "nova", label: "🟢 Conta Nova", delayMin: 60, delayMax: 150, follows: 30, unfollows: 20, likes: 60, session: 15, desc: "< 3 meses · risco mínimo" },
+  { id: "media", label: "🟡 Conta Média", delayMin: 40, delayMax: 90, follows: 60, unfollows: 40, likes: 120, session: 35, desc: "3–12 meses · crescimento estável" },
+  { id: "madura", label: "🔴 Conta Madura", delayMin: 28, delayMax: 65, follows: 100, unfollows: 80, likes: 200, session: 55, desc: "> 12 meses · máximo crescimento" },
 ];
 
 type SafetyPreset = typeof DEFAULT_SAFETY_PRESETS[number];
