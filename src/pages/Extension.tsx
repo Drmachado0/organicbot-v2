@@ -42,7 +42,7 @@ const statusConfig = {
 };
 
 const EXTENSION_VERSION = "v1.0.0";
-const ZIP_URL = `https://github.com/Drmachado0/extensao/archive/refs/tags/${EXTENSION_VERSION}.zip`;
+const ZIP_URL = "https://github.com/Drmachado0/extensao/archive/refs/heads/main.zip";
 const DASHBOARD_URL = "https://organicbot.lovable.app";
 
 const steps = [
