@@ -1432,9 +1432,7 @@ export default function BotSettings() {
               </div>
 
               <div className="pt-3 border-t border-border/30">
-                <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: "hsl(215 72% 60% / 0.08)", border: "1px solid hsl(215 72% 60% / 0.2)", color: "hsl(215 72% 60%)" }}>
-                  ℹ️ A randomização de delays é gerenciada automaticamente pela extensão com base no <strong>heat</strong> da conta. Não é necessário configurar manualmente.
-                </div>
+                <p className="text-xs text-muted-foreground">A variação de delay é gerenciada automaticamente pela extensão com base no calor da conta (daily_heat).</p>
               </div>
             </SectionCard>
           </div>
