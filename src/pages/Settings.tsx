@@ -625,7 +625,7 @@ function InstagramAccountsSection({ userId }: { userId: string }) {
   const isOnline = (account: IgAccount) => {
     if (!account.bot_online || !account.last_heartbeat) return false;
     const diff = Date.now() - new Date(account.last_heartbeat).getTime();
-    return diff < 3 * 60 * 1000; // 3 min threshold
+    return diff < 6 * 60 * 1000; // 6 min threshold
   };
 
   return (
