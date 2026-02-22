@@ -183,7 +183,7 @@ const BOT_MODES = [
 ];
 
 const DEFAULT_SAFETY_PRESETS = [
-  { id: "nova", label: "🟢 Conta Nova", delayMin: 60, delayMax: 150, follows: 30, unfollows: 20, likes: 60, session: 15, desc: "< 3 meses · risco mínimo" },
+  { id: "nova", label: "🟢 Conta Nova", delayMin: 60, delayMax: 150, follows: 25, unfollows: 15, likes: 50, session: 15, desc: "< 3 meses · risco mínimo" },
   { id: "media", label: "🟡 Conta Média", delayMin: 40, delayMax: 90, follows: 60, unfollows: 40, likes: 120, session: 35, desc: "3–12 meses · crescimento estável" },
   { id: "madura", label: "🔴 Conta Madura", delayMin: 28, delayMax: 65, follows: 100, unfollows: 80, likes: 200, session: 55, desc: "> 12 meses · máximo crescimento" },
 ];
@@ -997,9 +997,12 @@ export default function BotSettings() {
         bot_schedule: botSchedule as unknown as import("@/integrations/supabase/types").Json,
         safety_preset: detectedPreset,
         safety_limits: {
-          follow_daily: settings.follow_daily_limit,
-          unfollow_daily: Math.round(settings.follow_daily_limit * 0.7),
-          like_daily: settings.follow_daily_limit * settings.likes_per_follow,
+          FOLLOW_DAILY: settings.follow_daily_limit,
+          UNFOLLOW_DAILY: settings.unfollow_daily_limit,
+          LIKE_DAILY: settings.like_daily_limit,
+          MAX_PER_SESSION: settings.max_actions_per_session,
+          MIN_DELAY_SECONDS: settings.delay_min,
+          MAX_DELAY_SECONDS: settings.delay_max,
         } as unknown as import("@/integrations/supabase/types").Json,
         organic_timings: (() => {
           const ws = settings.week_schedule;
@@ -1429,26 +1432,10 @@ export default function BotSettings() {
                 <div className="flex justify-between text-xs text-muted-foreground/60"><span>10s</span><span>180s</span></div>
               </div>
 
-              <div className="pt-1 space-y-3 border-t border-border/30">
-                <ToggleRow
-                  label="Randomizar delays"
-                  description="Adiciona variação aleatória para parecer mais humano"
-                  checked={settings.randomize_delay}
-                  onCheckedChange={(v) => set("randomize_delay", v)}
-                />
-                {settings.randomize_delay && (
-                  <div className="space-y-2 pl-1">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs text-muted-foreground">Variação</Label>
-                      <span className="text-xs font-semibold text-muted-foreground">±{settings.randomize_percent}%</span>
-                    </div>
-                    <Slider
-                      min={10} max={80} step={5}
-                      value={[settings.randomize_percent]}
-                      onValueChange={([v]) => set("randomize_percent", v)}
-                    />
-                  </div>
-                )}
+              <div className="pt-3 border-t border-border/30">
+                <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: "hsl(215 72% 60% / 0.08)", border: "1px solid hsl(215 72% 60% / 0.2)", color: "hsl(215 72% 60%)" }}>
+                  ℹ️ A randomização de delays é gerenciada automaticamente pela extensão com base no <strong>heat</strong> da conta. Não é necessário configurar manualmente.
+                </div>
               </div>
             </SectionCard>
           </div>
@@ -1597,47 +1584,53 @@ export default function BotSettings() {
                   checked={settings.dont_unfollow_followers}
                   onCheckedChange={(v) => set("dont_unfollow_followers", v)}
                 />
-                <ToggleRow
-                  label="Não desfazer seguimento recente"
-                  description={`Aguarda ${settings.dont_unfollow_fresh_days} dias antes de unfollow`}
-                  checked={settings.dont_unfollow_fresh}
-                  onCheckedChange={(v) => set("dont_unfollow_fresh", v)}
-                />
-                {settings.dont_unfollow_fresh && (
-                  <div className="pl-1 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs text-muted-foreground">Dias de espera</Label>
-                      <span className="text-xs font-semibold text-muted-foreground">{settings.dont_unfollow_fresh_days}d</span>
-                    </div>
-                    <Slider
-                      min={1} max={30} step={1}
-                      value={[settings.dont_unfollow_fresh_days]}
-                      onValueChange={([v]) => set("dont_unfollow_fresh_days", v)}
+
+                {/* Em breve — não implementados na extensão */}
+                <div className="opacity-50 pointer-events-none space-y-4">
+                  <div className="relative">
+                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
+                    <ToggleRow
+                      label="Não desfazer seguimento recente"
+                      description={`Aguarda ${settings.dont_unfollow_fresh_days} dias antes de unfollow`}
+                      checked={settings.dont_unfollow_fresh}
+                      onCheckedChange={() => {}}
                     />
                   </div>
-                )}
-                <ToggleRow
-                  label="Não desfazer seguimento de não-organicbot"
-                  description="Só desfaz follows realizados por este bot"
-                  checked={settings.dont_unfollow_non_organicbot}
-                  onCheckedChange={(v) => set("dont_unfollow_non_organicbot", v)}
-                />
-                <ToggleRow
-                  label="Não bloquear contas que passam nos filtros"
-                  checked={settings.dont_block_matching_filters}
-                  onCheckedChange={(v) => set("dont_block_matching_filters", v)}
-                />
-                <ToggleRow
-                  label="Não desfazer seguimento de contas nos filtros"
-                  checked={settings.dont_unfollow_matching_filters}
-                  onCheckedChange={(v) => set("dont_unfollow_matching_filters", v)}
-                />
-                <ToggleRow
-                  label="Seguir contas já tentadas anteriormente"
-                  description="Reprocessa targets que já foram tentados"
-                  checked={settings.follow_already_attempted}
-                  onCheckedChange={(v) => set("follow_already_attempted", v)}
-                />
+                  <div className="relative">
+                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
+                    <ToggleRow
+                      label="Não desfazer seguimento de não-organicbot"
+                      description="Só desfaz follows realizados por este bot"
+                      checked={settings.dont_unfollow_non_organicbot}
+                      onCheckedChange={() => {}}
+                    />
+                  </div>
+                  <div className="relative">
+                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
+                    <ToggleRow
+                      label="Não bloquear contas que passam nos filtros"
+                      checked={settings.dont_block_matching_filters}
+                      onCheckedChange={() => {}}
+                    />
+                  </div>
+                  <div className="relative">
+                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
+                    <ToggleRow
+                      label="Não desfazer seguimento de contas nos filtros"
+                      checked={settings.dont_unfollow_matching_filters}
+                      onCheckedChange={() => {}}
+                    />
+                  </div>
+                  <div className="relative">
+                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
+                    <ToggleRow
+                      label="Seguir contas já tentadas anteriormente"
+                      description="Reprocessa targets que já foram tentados"
+                      checked={settings.follow_already_attempted}
+                      onCheckedChange={() => {}}
+                    />
+                  </div>
+                </div>
               </div>
             </SectionCard>
 
