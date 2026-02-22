@@ -345,6 +345,39 @@ export type Database = {
         }
         Relationships: []
       }
+      saved_lists: {
+        Row: {
+          created_at: string | null
+          data: Json
+          id: string
+          ig_account_id: string
+          name: string
+          updated_at: string | null
+          user_id: string
+          username_count: number
+        }
+        Insert: {
+          created_at?: string | null
+          data?: Json
+          id?: string
+          ig_account_id: string
+          name: string
+          updated_at?: string | null
+          user_id: string
+          username_count?: number
+        }
+        Update: {
+          created_at?: string | null
+          data?: Json
+          id?: string
+          ig_account_id?: string
+          name?: string
+          updated_at?: string | null
+          user_id?: string
+          username_count?: number
+        }
+        Relationships: []
+      }
       session_stats: {
         Row: {
           blocks_count: number | null
