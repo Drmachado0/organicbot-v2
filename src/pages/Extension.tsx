@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,9 @@ interface IgAccount {
   delay_min: number | null;
   delay_max: number | null;
   max_actions_per_session: number | null;
+  daily_heat: number | null;
+  cooldown_remaining_minutes: number | null;
+  cooldown_escalation: number | null;
 }
 
 interface CurrentConfig {
@@ -43,18 +47,18 @@ interface CurrentConfig {
 }
 
 const DEFAULT_CONFIG: CurrentConfig = {
-  follow_daily_limit: 150,
-  like_daily_limit: 300,
-  delay_min: 25,
-  delay_max: 45,
-  max_actions_per_session: 50,
+  follow_daily_limit: 40,
+  like_daily_limit: 120,
+  delay_min: 40,
+  delay_max: 90,
+  max_actions_per_session: 35,
   unfollow_daily_limit: 100,
 };
 
 const REFERENCE_PRESETS = [
-  { id: "nova", name: "Conta Nova", badge: "🟢 Conservador", follows: 40, delay: "45–90s", session: 20, desc: "< 3 meses · risco mínimo" },
-  { id: "media", name: "Conta Média", badge: "🟡 Moderado", follows: 100, delay: "25–45s", session: 50, desc: "3–12 meses · crescimento estável" },
-  { id: "madura", name: "Conta Madura", badge: "🔴 Agressivo", follows: 200, delay: "15–25s", session: 100, desc: "> 12 meses · máximo crescimento" },
+  { id: "nova", name: "Conta Nova", badge: "🟢 Conservador", follows: 30, delay: "60–150s", session: 15, desc: "< 3 meses · risco mínimo" },
+  { id: "media", name: "Conta Média", badge: "🟡 Moderado", follows: 60, delay: "40–90s", session: 35, desc: "3–12 meses · crescimento estável" },
+  { id: "madura", name: "Conta Madura", badge: "🔴 Agressivo", follows: 100, delay: "28–65s", session: 55, desc: "> 12 meses · máximo crescimento" },
 ];
 
 function getClosestPreset(config: CurrentConfig): string {
@@ -71,8 +75,8 @@ function getClosestPreset(config: CurrentConfig): string {
 function getExtensionStatus(lastHeartbeat: string | null): "online" | "away" | "offline" {
   if (!lastHeartbeat) return "offline";
   const diff = Date.now() - new Date(lastHeartbeat).getTime();
-  if (diff < 6 * 60 * 1000) return "online";
-  if (diff < 30 * 60 * 1000) return "away";
+  if (diff < 8 * 60 * 1000) return "online";
+  if (diff < 45 * 60 * 1000) return "away";
   return "offline";
 }
 
@@ -82,8 +86,8 @@ const statusConfig = {
   offline: { label: "Extensão offline", color: "hsl(215 20% 45%)", bg: "hsl(215 20% 45% / 0.08)" },
 };
 
-const EXTENSION_VERSION = "v8.1.1";
-const ZIP_URL = "https://github.com/Drmachado0/extensao/archive/refs/heads/main.zip";
+const EXTENSION_VERSION = "v8.1.2";
+const ZIP_URL = "https://github.com/Drmachado0/extensao/archive/refs/tags/v8.1.2.zip";
 const DASHBOARD_URL = "https://organicbot.lovable.app";
 
 const steps = [
@@ -131,6 +135,7 @@ export default function ExtensionPage() {
   const [loading, setLoading] = useState(true);
   const [currentConfig, setCurrentConfig] = useState<CurrentConfig>(DEFAULT_CONFIG);
   const [configLoading, setConfigLoading] = useState(true);
+  const [sendingPreset, setSendingPreset] = useState<string | null>(null);
 
   // Fetch accounts and settings
   useEffect(() => {
@@ -139,11 +144,11 @@ export default function ExtensionPage() {
     // Fetch accounts
     supabase
       .from("ig_accounts")
-      .select("id, ig_username, last_heartbeat, bridge_version, bot_online, delay_min, delay_max, max_actions_per_session, safety_preset")
+      .select("id, ig_username, last_heartbeat, bridge_version, bot_online, delay_min, delay_max, max_actions_per_session, safety_preset, daily_heat, cooldown_remaining_minutes, cooldown_escalation")
       .eq("user_id", user.id)
       .eq("is_active", true)
       .then(({ data }) => {
-        setAccounts((data as IgAccount[]) ?? []);
+        setAccounts((data as unknown as IgAccount[]) ?? []);
         setLoading(false);
       });
 
@@ -199,13 +204,31 @@ export default function ExtensionPage() {
     setLoading(true);
     supabase
       .from("ig_accounts")
-      .select("id, ig_username, last_heartbeat, bridge_version, bot_online")
+      .select("id, ig_username, last_heartbeat, bridge_version, bot_online, delay_min, delay_max, max_actions_per_session, daily_heat, cooldown_remaining_minutes, cooldown_escalation")
       .eq("user_id", user.id)
       .eq("is_active", true)
       .then(({ data }) => {
-        setAccounts((data as IgAccount[]) ?? []);
+        setAccounts((data as unknown as IgAccount[]) ?? []);
         setLoading(false);
       });
+  };
+
+  const sendPresetRemotely = async (presetId: string) => {
+    if (!accounts.length) return;
+    setSendingPreset(presetId);
+    try {
+      const { error } = await supabase.rpc("send_bot_command", {
+        p_ig_account_id: accounts[0].id,
+        p_command: "set_safety_preset",
+        p_params: { preset: presetId },
+      });
+      if (error) throw error;
+      toast.success(`Preset "${presetId}" enviado para a extensão`);
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao enviar preset");
+    } finally {
+      setSendingPreset(null);
+    }
   };
 
   return (
@@ -265,32 +288,56 @@ export default function ExtensionPage() {
                 return (
                   <div
                     key={acc.id}
-                    className="flex items-center gap-3 rounded-xl px-4 py-3"
+                    className="rounded-xl px-4 py-3 space-y-2"
                     style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(220 18% 18%)" }}
                   >
-                    <span
-                      className="relative flex h-2.5 w-2.5 flex-shrink-0"
-                    >
-                      {status === "online" && (
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: cfg.color }} />
-                      )}
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5" style={{ backgroundColor: cfg.color }} />
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold">@{acc.ig_username}</p>
-                      {acc.last_heartbeat && (
-                        <p className="text-xs text-muted-foreground">
-                          Último sync: {new Date(acc.last_heartbeat).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                          {acc.bridge_version && ` · v${acc.bridge_version}`}
-                        </p>
-                      )}
+                    <div className="flex items-center gap-3">
+                      <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+                        {status === "online" && (
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: cfg.color }} />
+                        )}
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5" style={{ backgroundColor: cfg.color }} />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold">@{acc.ig_username}</p>
+                        {acc.last_heartbeat && (
+                          <p className="text-xs text-muted-foreground">
+                            Último sync: {new Date(acc.last_heartbeat).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                            {acc.bridge_version && ` · v${acc.bridge_version}`}
+                          </p>
+                        )}
+                      </div>
+                      <span
+                        className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0"
+                        style={{ color: cfg.color, backgroundColor: cfg.bg }}
+                      >
+                        {cfg.label}
+                      </span>
                     </div>
-                    <span
-                      className="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0"
-                      style={{ color: cfg.color, backgroundColor: cfg.bg }}
-                    >
-                      {cfg.label}
-                    </span>
+                    {/* Heat bar + cooldown */}
+                    {(() => {
+                      const heat = acc.daily_heat ?? 0;
+                      const heatColor = heat < 40 ? "hsl(152 72% 48%)" : heat < 70 ? "hsl(42 96% 56%)" : "hsl(0 72% 55%)";
+                      const cooldown = acc.cooldown_remaining_minutes ?? 0;
+                      return (
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Calor da conta</span>
+                              <span className="font-semibold" style={{ color: heatColor }}>{heat}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "hsl(220 18% 18%)" }}>
+                              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(heat, 100)}%`, backgroundColor: heatColor }} />
+                            </div>
+                          </div>
+                          {cooldown > 0 && (
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0" style={{ color: "hsl(42 96% 56%)", backgroundColor: "hsl(42 96% 56% / 0.12)" }}>
+                              ⏸ Cooldown {cooldown}min
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -320,7 +367,6 @@ export default function ExtensionPage() {
             </a>
           </Button>
         </div>
-
         <div className="glass-card rounded-2xl p-4 flex items-center justify-between gap-4">
           <div className="space-y-1">
             <p className="text-sm font-semibold">Abrir Dashboard</p>
@@ -444,6 +490,18 @@ export default function ExtensionPage() {
                     <p>Sessão: <span className="text-foreground font-medium">{p.session} ações</span></p>
                   </div>
                   <p className="text-xs text-muted-foreground/60">{p.desc}</p>
+                  {accounts.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full mt-1 text-xs gap-1.5"
+                      disabled={sendingPreset === p.id}
+                      onClick={() => sendPresetRemotely(p.id)}
+                    >
+                      <Zap className="h-3 w-3" />
+                      {sendingPreset === p.id ? "Enviando…" : "Aplicar remotamente"}
+                    </Button>
+                  )}
                 </div>
               );
             })}
