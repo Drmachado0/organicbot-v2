@@ -581,7 +581,7 @@ export default function QueuePage() {
       await supabase.rpc("send_bot_command", {
         p_ig_account_id: accountId,
         p_command: command,
-        p_params: params,
+        p_params: params as unknown as import("@/integrations/supabase/types").Json,
       });
       toast({ title: `Comando "${command}" enviado`, description: "A extensão processará em breve." });
       // Refresh commands panel after a short delay
@@ -716,7 +716,7 @@ export default function QueuePage() {
         ig_account_id: accountId,
         username,
         source: "manual" as const,
-        details: jsonItems[username] ?? {},
+        details: (jsonItems[username] ?? {}) as unknown as import("@/integrations/supabase/types").Json,
       }));
       const { error } = await supabase.from("target_queue").insert(rows);
       if (error) {
