@@ -58,6 +58,10 @@ import {
   BadgeCheck,
   ImageOff,
   Target,
+  Save,
+  FileText,
+  Pencil,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
@@ -76,6 +80,15 @@ interface IgAccount {
   bot_status: string | null;
   last_heartbeat: string | null;
   bot_mode: string | null;
+}
+
+interface SavedList {
+  id: string;
+  name: string;
+  data: any[];
+  username_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 interface TargetRow {
@@ -183,6 +196,17 @@ export default function QueuePage() {
   const [removeNoPhoto, setRemoveNoPhoto] = useState(false);
   const [removeDuplicates, setRemoveDuplicates] = useState(true);
 
+  // Saved lists state
+  const [savedLists, setSavedLists] = useState<SavedList[]>([]);
+  const [savingList, setSavingList] = useState(false);
+  const [saveListDialogOpen, setSaveListDialogOpen] = useState(false);
+  const [saveListName, setSaveListName] = useState("");
+  const [saveListSource, setSaveListSource] = useState<"import" | "direct">("import");
+  const [directUploadText, setDirectUploadText] = useState("");
+  const [directUploadName, setDirectUploadName] = useState("");
+  const [renamingListId, setRenamingListId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
   // ── Load accounts ────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -266,6 +290,85 @@ export default function QueuePage() {
   }, [user, accountId]);
 
   useEffect(() => { loadQueue(); loadSettings(); }, [loadQueue, loadSettings]);
+
+  // ── Load saved lists ────────────────────────────────────────────────────
+  const loadSavedLists = useCallback(async () => {
+    if (!user || !accountId) return;
+    const { data } = await supabase
+      .from("saved_lists" as any)
+      .select("id, name, data, username_count, created_at, updated_at")
+      .eq("user_id", user.id)
+      .eq("ig_account_id", accountId)
+      .order("created_at", { ascending: false });
+    setSavedLists((data as any as SavedList[]) ?? []);
+  }, [user, accountId]);
+
+  useEffect(() => { loadSavedLists(); }, [loadSavedLists]);
+
+  // ── Save list to DB ─────────────────────────────────────────────────────
+  const handleSaveList = async (name: string, usernames: string[]) => {
+    if (!user || !accountId || !name.trim() || !usernames.length) return;
+    setSavingList(true);
+    try {
+      const { error } = await supabase.from("saved_lists" as any).insert({
+        user_id: user.id,
+        ig_account_id: accountId,
+        name: name.trim(),
+        data: usernames,
+        username_count: usernames.length,
+      } as any);
+      if (error) throw error;
+      toast({ title: "Lista salva!", description: `"${name}" com ${usernames.length} usernames.` });
+      loadSavedLists();
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar lista", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingList(false);
+    }
+  };
+
+  const handleDeleteSavedList = async (id: string) => {
+    const { error } = await supabase.from("saved_lists" as any).delete().eq("id", id);
+    if (error) {
+      toast({ title: "Erro", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Lista excluída" });
+      loadSavedLists();
+    }
+  };
+
+  const handleRenameSavedList = async (id: string, newName: string) => {
+    if (!newName.trim()) return;
+    const { error } = await supabase.from("saved_lists" as any).update({ name: newName.trim() } as any).eq("id", id);
+    if (error) {
+      toast({ title: "Erro", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Lista renomeada" });
+      setRenamingListId(null);
+      loadSavedLists();
+    }
+  };
+
+  const handleReimportSavedList = async (list: SavedList) => {
+    if (!accountId) return;
+    const usernames = (list.data as any[]).map((item: any) => typeof item === "string" ? item : item?.username).filter(Boolean);
+    if (!usernames.length) return;
+    const { data, error } = await supabase.rpc("add_targets_batch", {
+      p_ig_account_id: accountId,
+      p_usernames: usernames,
+      p_source: "manual",
+    });
+    if (error) {
+      toast({ title: "Erro ao importar", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: `${data} target(s) adicionados da lista "${list.name}"` });
+      loadQueue();
+    }
+  };
+
+  const handleDownloadSavedList = (list: SavedList) => {
+    downloadFile(JSON.stringify(list.data, null, 2), `${list.name}.json`, "application/json");
+  };
 
   // ── Campaign progress stats ──────────────────────────────────────────────
   const campaignProgress = useMemo(() => {
@@ -652,6 +755,13 @@ export default function QueuePage() {
           <TabsList className="mx-6 mt-4 mb-0 w-fit rounded-lg bg-secondary border border-border">
             <TabsTrigger value="collector" className="text-xs px-4">Coletor</TabsTrigger>
             <TabsTrigger value="reader" className="text-xs px-4">Leitor de Lista</TabsTrigger>
+            <TabsTrigger value="saved" className="text-xs px-4">
+              <FolderOpen className="w-3 h-3 mr-1" />
+              Listas Salvas
+              {savedLists.length > 0 && (
+                <Badge className="ml-1.5 text-[9px] px-1 py-0 h-4 bg-primary/20 text-primary border-primary/30">{savedLists.length}</Badge>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           {/* ── TAB 1: COLETOR ── */}
@@ -1258,6 +1368,183 @@ export default function QueuePage() {
               </div>
             )}
           </TabsContent>
+
+          {/* ── TAB 3: LISTAS SALVAS ── */}
+          <TabsContent value="saved" className="flex-1 overflow-y-auto px-6 py-4 space-y-4 mt-0">
+
+            {/* Upload direto */}
+            <div className="rounded-xl border border-border bg-card p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-3">Salvar Nova Lista</p>
+              <div className="space-y-3">
+                <Input
+                  placeholder="Nome da lista (ex: leads-nicho-fitness)"
+                  value={directUploadName}
+                  onChange={(e) => setDirectUploadName(e.target.value)}
+                  className="h-8 text-xs border-border bg-secondary"
+                />
+                <label
+                  className="flex flex-col items-center justify-center gap-2 w-full h-20 rounded-lg border-2 border-dashed border-border bg-secondary/50 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      setDirectUploadText(ev.target?.result as string);
+                      if (!directUploadName) setDirectUploadName(file.name.replace(/\.(json|txt|csv)$/i, ""));
+                    };
+                    reader.readAsText(file);
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept=".txt,.csv,.json"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        setDirectUploadText(ev.target?.result as string);
+                        if (!directUploadName) setDirectUploadName(file.name.replace(/\.(json|txt|csv)$/i, ""));
+                      };
+                      reader.readAsText(file);
+                      e.target.value = "";
+                    }}
+                  />
+                  <Upload className="w-5 h-5 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">
+                    Arraste um arquivo <span className="text-primary font-medium">.txt / .csv / .json</span> ou clique
+                  </span>
+                </label>
+                {directUploadText && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Arquivo carregado: <span className="text-foreground font-medium">{(() => {
+                      try {
+                        const parsed = JSON.parse(directUploadText);
+                        if (Array.isArray(parsed)) return `${parsed.length} itens`;
+                      } catch { /* ignore */ }
+                      return `${directUploadText.split("\n").filter(Boolean).length} linhas`;
+                    })()}</span>
+                  </p>
+                )}
+                <Button
+                  size="sm"
+                  className="w-full text-xs h-8"
+                  disabled={!directUploadName.trim() || !directUploadText.trim() || savingList}
+                  onClick={async () => {
+                    let items: any[];
+                    try {
+                      const parsed = JSON.parse(directUploadText);
+                      items = Array.isArray(parsed) ? parsed : Object.keys(parsed);
+                    } catch {
+                      items = directUploadText.split("\n").map(u => u.trim().replace(/^@/, "")).filter(Boolean);
+                    }
+                    await handleSaveList(directUploadName, items);
+                    setDirectUploadName("");
+                    setDirectUploadText("");
+                  }}
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {savingList ? "Salvando..." : "Salvar Lista"}
+                </Button>
+              </div>
+            </div>
+
+            {/* Tabela de listas salvas */}
+            <div className="rounded-xl border border-border bg-card">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Listas Salvas ({savedLists.length})
+                </p>
+                <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={loadSavedLists}>
+                  <RefreshCw className="w-3 h-3" />
+                </Button>
+              </div>
+              {savedLists.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <FileText className="w-8 h-8 mb-2 opacity-50" />
+                  <p className="text-xs">Nenhuma lista salva ainda.</p>
+                  <p className="text-[10px] mt-1">Faça upload acima ou salve uma lista ao importar.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {savedLists.map((list) => (
+                    <div key={list.id} className="px-4 py-3 flex items-center gap-3 hover:bg-secondary/40 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        {renamingListId === list.id ? (
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              className="h-7 text-xs border-border bg-secondary"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleRenameSavedList(list.id, renameValue);
+                                if (e.key === "Escape") setRenamingListId(null);
+                              }}
+                            />
+                            <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" onClick={() => handleRenameSavedList(list.id, renameValue)}>OK</Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={() => setRenamingListId(null)}>✕</Button>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium text-foreground truncate">{list.name}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <Badge className="text-[9px] px-1.5 py-0 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-full">
+                                {list.username_count} usernames
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground">
+                                {formatDistanceToNow(new Date(list.created_at), { addSuffix: true, locale: ptBR })}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      {renamingListId !== list.id && (
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 border-primary/40 text-primary hover:bg-primary/10"
+                            onClick={() => handleReimportSavedList(list)} title="Importar para fila">
+                            <Upload className="w-3 h-3" />
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2"
+                            onClick={() => handleDownloadSavedList(list)} title="Baixar JSON">
+                            <Download className="w-3 h-3" />
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2"
+                            onClick={() => { setRenamingListId(list.id); setRenameValue(list.name); }} title="Renomear">
+                            <Pencil className="w-3 h-3" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 border-destructive/40 text-destructive hover:bg-destructive/10" title="Excluir">
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Excluir lista "{list.name}"?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Esta ação não pode ser desfeita. A lista com {list.username_count} usernames será removida permanentemente.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => handleDeleteSavedList(list.id)}>
+                                  Excluir
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
         </Tabs>
       </div>
 
@@ -1367,8 +1654,22 @@ export default function QueuePage() {
               )}
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button size="sm" variant="ghost" onClick={() => { setImportOpen(false); setImportText(""); }}>Cancelar</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setSaveListSource("import");
+                setSaveListName("");
+                setSaveListDialogOpen(true);
+              }}
+              disabled={importUsernames.length === 0}
+              className="border-primary/40 text-primary hover:bg-primary/10"
+            >
+              <Save className="w-3.5 h-3.5" />
+              Salvar como Lista
+            </Button>
             <Button
               size="sm"
               onClick={handleImport}
@@ -1424,6 +1725,50 @@ export default function QueuePage() {
             <Button size="sm" variant="ghost" onClick={() => setManualPicOpen(false)}>Cancelar</Button>
             <Button size="sm" onClick={handleManualPicSave} disabled={!manualPicUrl.trim() || loadingCmd === "update_profile_pic"}>
               {loadingCmd === "update_profile_pic" ? "Salvando..." : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Save List Name Dialog ── */}
+      <Dialog open={saveListDialogOpen} onOpenChange={(open) => { setSaveListDialogOpen(open); if (!open) setSaveListName(""); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Salvar Lista</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">Escolha um nome para esta lista:</p>
+            <Input
+              placeholder="Nome da lista"
+              value={saveListName}
+              onChange={(e) => setSaveListName(e.target.value)}
+              className="text-xs"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && saveListName.trim()) {
+                  handleSaveList(saveListName, importUsernames);
+                  setSaveListDialogOpen(false);
+                  setSaveListName("");
+                }
+              }}
+            />
+            <p className="text-[10px] text-muted-foreground">
+              <span className="font-semibold text-foreground">{importUsernames.length}</span> usernames serão salvos.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="ghost" onClick={() => setSaveListDialogOpen(false)}>Cancelar</Button>
+            <Button
+              size="sm"
+              disabled={!saveListName.trim() || savingList}
+              onClick={async () => {
+                await handleSaveList(saveListName, importUsernames);
+                setSaveListDialogOpen(false);
+                setSaveListName("");
+              }}
+            >
+              <Save className="w-3.5 h-3.5" />
+              {savingList ? "Salvando..." : "Salvar"}
             </Button>
           </DialogFooter>
         </DialogContent>
