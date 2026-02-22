@@ -974,7 +974,7 @@ export default function BotSettings() {
         safety_preset: detectedPreset,
         safety_limits: {
           MAX_PER_DAY: settings.follow_daily_limit,
-          MAX_PER_HOUR: Math.ceil(settings.follow_daily_limit / 12),
+          MAX_PER_HOUR: Math.ceil(settings.follow_daily_limit / 13),
           MAX_PER_SESSION: settings.max_actions_per_session,
           MIN_DELAY_SECONDS: settings.delay_min,
           MAX_DELAY_SECONDS: settings.delay_max,
@@ -1237,6 +1237,14 @@ export default function BotSettings() {
                                   delay_max: p.delayMax,
                                   max_actions_per_session: p.session,
                                   likes_per_follow: settings.likes_per_follow ?? 2,
+                                  safety_preset: p.id,
+                                  safety_limits: {
+                                    MAX_PER_DAY: p.follows,
+                                    MAX_PER_HOUR: Math.ceil(p.follows / 13),
+                                    MAX_PER_SESSION: p.session,
+                                    MIN_DELAY_SECONDS: p.delayMin,
+                                    MAX_DELAY_SECONDS: p.delayMax,
+                                  },
                                 }).eq("id", acc.id)
                               )
                             );
@@ -1550,14 +1558,46 @@ export default function BotSettings() {
               title="Filtros & Proteções"
               icon={<Filter className="h-4 w-4" style={{ color: "hsl(152 72% 48%)" }} />}
             >
-              <div className="space-y-4">
+              <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: "hsl(42 96% 56% / 0.08)", border: "1px solid hsl(42 96% 56% / 0.2)", color: "hsl(42 96% 56%)" }}>
+                ⚠️ Estas configurações serão ativadas em uma atualização futura da extensão.
+              </div>
+              <div className="space-y-4 opacity-50 cursor-not-allowed pointer-events-none">
                 <ToggleRow
                   label="Não desfazer seguimento de seguidores"
                   description="Protege quem já te segue de receber unfollow"
                   checked={settings.dont_unfollow_followers}
-                  onCheckedChange={(v) => set("dont_unfollow_followers", v)}
+                  onCheckedChange={() => {}}
                 />
-
+                <ToggleRow
+                  label="Não desfazer seguimento recente"
+                  description="Protege seguimentos feitos nos últimos dias"
+                  checked={false}
+                  onCheckedChange={() => {}}
+                />
+                <ToggleRow
+                  label="Não desfazer seguimento de não-organicbot"
+                  description="Protege contas que não foram seguidas pelo bot"
+                  checked={false}
+                  onCheckedChange={() => {}}
+                />
+                <ToggleRow
+                  label="Não bloquear contas que passam nos filtros"
+                  description="Evita bloquear contas que atendem os critérios"
+                  checked={false}
+                  onCheckedChange={() => {}}
+                />
+                <ToggleRow
+                  label="Não desfazer seguimento de contas nos filtros"
+                  description="Protege contas que correspondem aos filtros ativos"
+                  checked={false}
+                  onCheckedChange={() => {}}
+                />
+                <ToggleRow
+                  label="Seguir contas já tentadas anteriormente"
+                  description="Permite re-seguir contas já processadas"
+                  checked={false}
+                  onCheckedChange={() => {}}
+                />
               </div>
             </SectionCard>
 
