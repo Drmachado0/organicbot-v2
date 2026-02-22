@@ -506,6 +506,7 @@ export type Database = {
           created_at: string
           hashtags: Json | null
           id: string
+          ig_account_id: string | null
           is_active: boolean | null
           location: string | null
           name: string
@@ -518,6 +519,7 @@ export type Database = {
           created_at?: string
           hashtags?: Json | null
           id?: string
+          ig_account_id?: string | null
           is_active?: boolean | null
           location?: string | null
           name: string
@@ -530,6 +532,7 @@ export type Database = {
           created_at?: string
           hashtags?: Json | null
           id?: string
+          ig_account_id?: string | null
           is_active?: boolean | null
           location?: string | null
           name?: string
@@ -537,7 +540,15 @@ export type Database = {
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "targeting_campaigns_ig_account_id_fkey"
+            columns: ["ig_account_id"]
+            isOneToOne: false
+            referencedRelation: "ig_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_settings: {
         Row: {
