@@ -264,7 +264,8 @@ export function useDashboardV2(): DashboardData {
           .from("target_queue")
           .select("campaign_id, status")
           .eq("ig_account_id", accountId)
-          .in("campaign_id", campaignIds);
+          .in("campaign_id", campaignIds)
+          .limit(5000);
         const statsMap: Record<string, { done: number; total: number }> = {};
         for (const row of (queueData ?? []) as { campaign_id: string; status: string }[]) {
           if (!statsMap[row.campaign_id]) statsMap[row.campaign_id] = { done: 0, total: 0 };
@@ -329,6 +330,20 @@ export function useDashboardV2(): DashboardData {
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "ig_accounts", filter: `id=eq.${activeAccountId}` }, (payload) => {
         const row = payload.new as DashboardAccount;
         setAccounts((prev) => prev.map((a) => a.id === row.id ? { ...a, queue_total: row.queue_total, queue_processed: row.queue_processed, bot_online: row.bot_online, bot_status: row.bot_status, profile_pic_url: row.profile_pic_url, followers_count: row.followers_count, following_count: row.following_count, bot_mode: row.bot_mode, last_heartbeat: row.last_heartbeat } : a));
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "growth_stats", filter: `ig_account_id=eq.${activeAccountId}` }, (payload) => {
+        const newRow = payload.new as { recorded_at: string; followers_count: number | null };
+        const day = newRow.recorded_at?.split("T")[0];
+        if (!day) return;
+        setGrowthHistory((prev) => {
+          const idx = prev.findIndex((p) => p.day === day);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = { day, followers_count: newRow.followers_count || 0 };
+            return updated;
+          }
+          return [...prev, { day, followers_count: newRow.followers_count || 0 }].sort((a, b) => a.day.localeCompare(b.day));
+        });
       })
       .subscribe();
 
