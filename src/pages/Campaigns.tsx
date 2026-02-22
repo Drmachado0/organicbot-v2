@@ -39,6 +39,9 @@ interface Campaign {
   competitors: string[];
   is_active: boolean;
   created_at: string;
+  ig_account_id: string | null;
+  queue_pending: number;
+  queue_done: number;
 }
 
 interface TagInputProps {
@@ -118,38 +121,22 @@ const EMPTY_FORM = {
 
 interface InjectModalProps {
   campaign: Campaign;
-  userId: string;
+  igAccountId: string;
   onClose: () => void;
   onInjected: () => void;
 }
 
-function InjectModal({ campaign, userId, onClose, onInjected }: InjectModalProps) {
-  const [accounts, setAccounts] = useState<{ id: string; ig_username: string }[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
+function InjectModal({ campaign, igAccountId, onClose, onInjected }: InjectModalProps) {
   const [isInjecting, setIsInjecting] = useState(false);
-
-  useEffect(() => {
-    supabase
-      .from("ig_accounts")
-      .select("id, ig_username")
-      .eq("user_id", userId)
-      .eq("is_active", true)
-      .order("created_at")
-      .then(({ data }) => {
-        const accs = (data ?? []) as { id: string; ig_username: string }[];
-        setAccounts(accs);
-        if (accs.length > 0) setSelectedId(accs[0].id);
-      });
-  }, [userId]);
 
   const totalTargets = campaign.competitors.length;
 
   const handleInject = async () => {
-    if (!selectedId || campaign.competitors.length === 0) return;
+    if (!igAccountId || campaign.competitors.length === 0) return;
     setIsInjecting(true);
     try {
       const { data, error } = await supabase.rpc("add_targets_batch", {
-        p_ig_account_id: selectedId,
+        p_ig_account_id: igAccountId,
         p_usernames: campaign.competitors,
         p_source: "campaign",
         p_campaign_id: campaign.id,
@@ -160,7 +147,7 @@ function InjectModal({ campaign, userId, onClose, onInjected }: InjectModalProps
 
       // Auto-sync: force extension to pick up new targets immediately
       await supabase.rpc("send_bot_command", {
-        p_ig_account_id: selectedId,
+        p_ig_account_id: igAccountId,
         p_command: "sync_queue",
         p_params: {},
       });
@@ -234,27 +221,6 @@ function InjectModal({ campaign, userId, onClose, onInjected }: InjectModalProps
           )}
         </div>
 
-        {/* Account selector */}
-        <div className="space-y-2">
-          <Label className="text-sm text-muted-foreground">Conta Instagram de destino</Label>
-          {accounts.length === 0 ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando contas…
-            </div>
-          ) : (
-            <Select value={selectedId} onValueChange={setSelectedId}>
-              <SelectTrigger className="glass-card border-border/60 h-9 text-sm">
-                <SelectValue placeholder="Selecionar conta" />
-              </SelectTrigger>
-              <SelectContent>
-                {accounts.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        </div>
-
         {/* Actions */}
         <div className="flex gap-2 pt-1">
           <Button variant="ghost" size="sm" onClick={onClose} className="flex-1 h-9">
@@ -263,7 +229,7 @@ function InjectModal({ campaign, userId, onClose, onInjected }: InjectModalProps
           <Button
             size="sm"
             onClick={handleInject}
-            disabled={isInjecting || !selectedId || campaign.competitors.length === 0}
+            disabled={isInjecting || !igAccountId || campaign.competitors.length === 0}
             className="flex-1 h-9 gap-1.5 font-semibold"
             style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}
           >
@@ -288,34 +254,18 @@ interface QueueStats {
   done: number;
 }
 
-function TargetQueuePanel({ userId }: { userId: string }) {
-  const [accounts, setAccounts] = useState<{ id: string; ig_username: string }[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
+function TargetQueuePanel({ igAccountId }: { igAccountId: string }) {
   const [stats, setStats] = useState<QueueStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
   const [clearing, setClearing] = useState(false);
 
-  useEffect(() => {
-    supabase
-      .from("ig_accounts")
-      .select("id, ig_username")
-      .eq("user_id", userId)
-      .eq("is_active", true)
-      .order("created_at")
-      .then(({ data }) => {
-        const accs = (data ?? []) as { id: string; ig_username: string }[];
-        setAccounts(accs);
-        if (accs.length > 0) setSelectedId(accs[0].id);
-      });
-  }, [userId]);
-
-  const loadStats = useCallback(async (id: string) => {
-    if (!id) return;
+  const loadStats = useCallback(async () => {
+    if (!igAccountId) return;
     setLoadingStats(true);
     const [pendingRes, processingRes, doneRes] = await Promise.all([
-      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", id).in("status", ["pending", "injected"]),
-      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", id).eq("status", "processing"),
-      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", id).eq("status", "done"),
+      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", igAccountId).in("status", ["pending", "injected"]),
+      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", igAccountId).eq("status", "processing"),
+      supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", igAccountId).eq("status", "done"),
     ]);
     setStats({
       pending: pendingRes.count ?? 0,
@@ -323,32 +273,32 @@ function TargetQueuePanel({ userId }: { userId: string }) {
       done: doneRes.count ?? 0,
     });
     setLoadingStats(false);
-  }, []);
+  }, [igAccountId]);
 
   useEffect(() => {
-    if (selectedId) loadStats(selectedId);
-  }, [selectedId, loadStats]);
+    loadStats();
+  }, [loadStats]);
 
   // Realtime subscription to update stats when extension processes targets
   useEffect(() => {
-    if (!selectedId) return;
+    if (!igAccountId) return;
     const channel = supabase
-      .channel(`campaign-queue-${selectedId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${selectedId}` }, () => {
-        loadStats(selectedId);
+      .channel(`campaign-queue-${igAccountId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${igAccountId}` }, () => {
+        loadStats();
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [selectedId, loadStats]);
+  }, [igAccountId, loadStats]);
 
   const handleClear = async () => {
-    if (!selectedId) return;
+    if (!igAccountId) return;
     setClearing(true);
     try {
-      const { data, error } = await supabase.rpc("clear_target_queue", { p_ig_account_id: selectedId, p_status: "all" });
+      const { data, error } = await supabase.rpc("clear_target_queue", { p_ig_account_id: igAccountId, p_status: "all" });
       if (error) throw error;
       toast.success(`${data} targets removidos da fila`);
-      loadStats(selectedId);
+      loadStats();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao limpar fila");
     } finally {
@@ -366,32 +316,15 @@ function TargetQueuePanel({ userId }: { userId: string }) {
           <ListOrdered className="h-4 w-4" style={{ color: "hsl(252 62% 60%)" }} />
           <p className="text-sm font-semibold">Fila de Targets</p>
         </div>
-        <div className="flex items-center gap-2">
-          {accounts.length > 1 && (
-            <Select value={selectedId} onValueChange={setSelectedId}>
-              <SelectTrigger className="h-8 text-xs w-36 glass-card border-border/60">
-                <SelectValue placeholder="Conta" />
-              </SelectTrigger>
-              <SelectContent>
-                {accounts.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {accounts.length === 1 && (
-            <span className="text-xs text-muted-foreground">@{accounts[0]?.ig_username}</span>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
-            onClick={() => loadStats(selectedId)}
-            disabled={loadingStats}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loadingStats ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          onClick={() => loadStats()}
+          disabled={loadingStats}
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loadingStats ? "animate-spin" : ""}`} />
+        </Button>
       </div>
 
       {loadingStats || !stats ? (
@@ -438,6 +371,8 @@ function TargetQueuePanel({ userId }: { userId: string }) {
 
 export default function Campaigns() {
   const { user } = useAuth();
+  const [accounts, setAccounts] = useState<{ id: string; ig_username: string }[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -448,29 +383,88 @@ export default function Campaigns() {
   const [injectCampaign, setInjectCampaign] = useState<Campaign | null>(null);
   const [queueRefreshKey, setQueueRefreshKey] = useState(0);
 
-  const load = useCallback(async () => {
+  // Load accounts
+  useEffect(() => {
     if (!user) return;
+    supabase
+      .from("ig_accounts")
+      .select("id, ig_username")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .order("created_at")
+      .then(({ data }) => {
+        const accs = (data ?? []) as { id: string; ig_username: string }[];
+        setAccounts(accs);
+        if (accs.length > 0) setSelectedAccountId(accs[0].id);
+      });
+  }, [user]);
+
+  const load = useCallback(async () => {
+    if (!user || !selectedAccountId) return;
     setIsLoading(true);
-    const { data, error } = await supabase
+
+    // Fetch campaigns filtered by ig_account_id
+    const { data: campData, error } = await supabase
       .from("targeting_campaigns")
       .select("*")
       .eq("user_id", user.id)
+      .eq("ig_account_id", selectedAccountId)
       .order("created_at", { ascending: false });
 
-    if (error) { toast.error("Erro ao carregar campanhas"); }
-    else {
-      setCampaigns(
-        (data ?? []).map((c) => ({
-          ...c,
-          hashtags: Array.isArray(c.hashtags) ? (c.hashtags as string[]) : [],
-          competitors: Array.isArray(c.competitors) ? (c.competitors as string[]) : [],
-          niche: c.niche ?? null,
-          location: c.location ?? null,
-        }))
-      );
+    if (error) {
+      toast.error("Erro ao carregar campanhas");
+      setIsLoading(false);
+      return;
     }
+
+    const rawCampaigns = (campData ?? []).map((c) => ({
+      ...c,
+      hashtags: Array.isArray(c.hashtags) ? (c.hashtags as string[]) : [],
+      competitors: Array.isArray(c.competitors) ? (c.competitors as string[]) : [],
+      niche: c.niche ?? null,
+      location: c.location ?? null,
+      ig_account_id: c.ig_account_id ?? null,
+      queue_pending: 0,
+      queue_done: 0,
+    }));
+
+    // Fetch queue stats per campaign
+    if (rawCampaigns.length > 0) {
+      const campaignIds = rawCampaigns.map((c) => c.id);
+      const [pendingRes, doneRes] = await Promise.all([
+        supabase
+          .from("target_queue")
+          .select("campaign_id", { count: "exact" })
+          .eq("ig_account_id", selectedAccountId)
+          .in("campaign_id", campaignIds)
+          .in("status", ["pending", "injected"]),
+        supabase
+          .from("target_queue")
+          .select("campaign_id", { count: "exact" })
+          .eq("ig_account_id", selectedAccountId)
+          .in("campaign_id", campaignIds)
+          .eq("status", "done"),
+      ]);
+
+      // Count per campaign from raw data
+      const pendingMap: Record<string, number> = {};
+      const doneMap: Record<string, number> = {};
+      (pendingRes.data ?? []).forEach((r: any) => {
+        pendingMap[r.campaign_id] = (pendingMap[r.campaign_id] || 0) + 1;
+      });
+      (doneRes.data ?? []).forEach((r: any) => {
+        doneMap[r.campaign_id] = (doneMap[r.campaign_id] || 0) + 1;
+      });
+
+      rawCampaigns.forEach((c) => {
+        c.queue_pending = pendingMap[c.id] || 0;
+        c.queue_done = doneMap[c.id] || 0;
+      });
+    }
+
+    setCampaigns(rawCampaigns);
     setIsLoading(false);
-  }, [user]);
+  }, [user, selectedAccountId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -501,7 +495,7 @@ export default function Campaigns() {
   };
 
   const save = async () => {
-    if (!user) return;
+    if (!user || !selectedAccountId) return;
     if (!form.name.trim()) { toast.error("Nome da campanha é obrigatório"); return; }
 
     setIsSaving(true);
@@ -514,6 +508,7 @@ export default function Campaigns() {
         competitors: form.competitors,
         is_active: form.is_active,
         user_id: user.id,
+        ig_account_id: selectedAccountId,
       };
 
       if (editId) {
@@ -572,20 +567,57 @@ export default function Campaigns() {
           <Target className="h-5 w-5" style={{ color: "hsl(152 72% 48%)" }} />
           <h1 className="text-xl font-bold tracking-tight">Campanhas de Targeting</h1>
         </div>
-        {!showForm && (
-          <Button
-            onClick={openNew}
-            className="gap-1.5 h-9 font-semibold"
-            style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}
-          >
-            <Plus className="h-4 w-4" />
-            Nova Campanha
-          </Button>
-        )}
+        <div className="flex items-center gap-3">
+          {/* Account selector */}
+          {accounts.length > 1 && (
+            <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+              <SelectTrigger className="h-9 text-xs w-40 glass-card border-border/60">
+                <SelectValue placeholder="Conta" />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {accounts.length === 1 && (
+            <span className="text-xs text-muted-foreground">@{accounts[0]?.ig_username}</span>
+          )}
+          {!showForm && (
+            <Button
+              onClick={openNew}
+              className="gap-1.5 h-9 font-semibold"
+              style={{ backgroundColor: "hsl(152 72% 48%)", color: "hsl(222 25% 6%)" }}
+              disabled={!selectedAccountId}
+            >
+              <Plus className="h-4 w-4" />
+              Nova Campanha
+            </Button>
+          )}
+        </div>
       </div>
 
+      {/* No account selected */}
+      {!selectedAccountId && !isLoading && accounts.length === 0 && (
+        <div className="glass-card rounded-2xl p-12 text-center animate-fade-in space-y-4">
+          <div
+            className="mx-auto w-14 h-14 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: "hsl(42 96% 56% / 0.1)" }}
+          >
+            <Users className="h-7 w-7" style={{ color: "hsl(42 96% 56%)" }} />
+          </div>
+          <div>
+            <p className="font-semibold">Nenhuma conta Instagram vinculada</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Vincule uma conta Instagram para criar campanhas de targeting.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Form Panel ── */}
-      {showForm && (
+      {showForm && selectedAccountId && (
         <div className="glass-card rounded-2xl p-6 mb-6 animate-fade-in space-y-5">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold text-base">
@@ -691,7 +723,7 @@ export default function Campaigns() {
       )}
 
       {/* ── Loading skeletons ── */}
-      {isLoading && (
+      {isLoading && selectedAccountId && (
         <div className="space-y-3">
           {[...Array(3)].map((_, i) => (
             <Skeleton key={i} className="h-16 w-full rounded-xl" />
@@ -700,7 +732,7 @@ export default function Campaigns() {
       )}
 
       {/* ── Empty state ── */}
-      {!isLoading && campaigns.length === 0 && !showForm && (
+      {!isLoading && campaigns.length === 0 && !showForm && selectedAccountId && (
         <div className="glass-card rounded-2xl p-12 text-center animate-fade-in space-y-4">
           <div
             className="mx-auto w-14 h-14 rounded-full flex items-center justify-center"
@@ -777,17 +809,17 @@ export default function Campaigns() {
       )}
 
       {/* ── Target Queue Panel ── */}
-      {user && <TargetQueuePanel key={queueRefreshKey} userId={user.id} />}
+      {selectedAccountId && <TargetQueuePanel key={`${selectedAccountId}-${queueRefreshKey}`} igAccountId={selectedAccountId} />}
 
       </div>
 
       {/* ── Inject Modal ── */}
-      {injectCampaign && user && (
+      {injectCampaign && selectedAccountId && (
         <InjectModal
           campaign={injectCampaign}
-          userId={user.id}
+          igAccountId={selectedAccountId}
           onClose={() => setInjectCampaign(null)}
-          onInjected={() => setQueueRefreshKey((k) => k + 1)}
+          onInjected={() => { setQueueRefreshKey((k) => k + 1); load(); }}
         />
       )}
     </AppShell>
@@ -808,6 +840,7 @@ interface CampaignRowProps {
 
 function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete, onToggleActive, onInject }: CampaignRowProps) {
   const totalSignals = c.hashtags.length + c.competitors.length;
+  const queueTotal = c.queue_pending + c.queue_done;
 
   return (
     <div
@@ -847,6 +880,11 @@ function CampaignRow({ campaign: c, isExpanded, onToggleExpand, onEdit, onDelete
               {c.hashtags.length} hashtag{c.hashtags.length !== 1 ? "s" : ""} ·{" "}
               {c.competitors.length} concorrente{c.competitors.length !== 1 ? "s" : ""}
             </span>
+            {queueTotal > 0 && (
+              <span className="text-xs text-muted-foreground">
+                · Fila: {c.queue_done}/{queueTotal}
+              </span>
+            )}
           </div>
         </div>
 
