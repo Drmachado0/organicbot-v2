@@ -60,7 +60,9 @@ const REFERENCE_PRESETS = [
 function getClosestPreset(config: CurrentConfig): string {
   const diffs = REFERENCE_PRESETS.map((p) => ({
     id: p.id,
-    diff: Math.abs(config.follow_daily_limit - p.follows) + Math.abs(config.max_actions_per_session - p.session),
+    diff:
+      Math.abs(config.follow_daily_limit - p.follows) / 200 +
+      Math.abs(config.max_actions_per_session - p.session) / 100,
   }));
   diffs.sort((a, b) => a.diff - b.diff);
   return diffs[0].id;
