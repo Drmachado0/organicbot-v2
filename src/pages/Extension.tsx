@@ -19,6 +19,7 @@ import {
   Clock,
   LogIn,
   Settings,
+  ExternalLink,
 } from "lucide-react";
 
 interface IgAccount {
@@ -318,6 +319,22 @@ export default function ExtensionPage() {
           </Button>
         </div>
 
+        <div className="glass-card rounded-2xl p-4 flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold">Abrir Dashboard</p>
+            <p className="text-xs text-muted-foreground">Acesse o painel de controle do OrganicBot</p>
+          </div>
+          <Button
+            asChild
+            className="gap-2 font-semibold shrink-0"
+            variant="outline"
+          >
+            <a href={DASHBOARD_URL} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="h-4 w-4" />
+              Abrir Dashboard
+            </a>
+          </Button>
+        </div>
 
 
         <div className="glass-card rounded-2xl p-5 space-y-5">
