@@ -19,7 +19,9 @@ function botModeLabel(mode: string | null): string {
     seguir_curtir: "Seguir + Curtir",
     seguir: "Só Seguir",
     curtir: "Só Curtir",
-    unfollow: "Unfollow",
+    deixar_seguir: "Unfollow",
+    desseguir: "Unfollow",
+    ver_story: "Ver Stories",
   };
   return mode ? (map[mode] ?? mode) : "—";
 }
