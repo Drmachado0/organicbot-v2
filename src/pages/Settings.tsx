@@ -997,9 +997,8 @@ export default function BotSettings() {
         bot_schedule: botSchedule as unknown as import("@/integrations/supabase/types").Json,
         safety_preset: detectedPreset,
         safety_limits: {
-          FOLLOW_DAILY: settings.follow_daily_limit,
-          UNFOLLOW_DAILY: settings.unfollow_daily_limit,
-          LIKE_DAILY: settings.like_daily_limit,
+          MAX_PER_DAY: settings.follow_daily_limit,
+          MAX_PER_HOUR: Math.ceil(settings.follow_daily_limit / 12),
           MAX_PER_SESSION: settings.max_actions_per_session,
           MIN_DELAY_SECONDS: settings.delay_min,
           MAX_DELAY_SECONDS: settings.delay_max,
