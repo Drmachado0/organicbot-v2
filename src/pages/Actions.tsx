@@ -74,20 +74,22 @@ export default function Actions() {
       .order("executed_at", { ascending: false })
       .range(p * PAGE_SIZE, (p + 1) * PAGE_SIZE - 1);
 
-    // Filter by specific account or by user's accounts
+    let ids: string[];
     if (filterAccountId !== "all") {
-      q = q.eq("ig_account_id", filterAccountId);
+      ids = [filterAccountId];
     } else {
-      const accountIds = igAccounts.map((a) => a.id);
-      if (accountIds.length > 0) {
-        q = q.in("ig_account_id", accountIds);
-      } else {
-        // No accounts loaded yet — return empty
-        setActions([]);
-        setIsLoading(false);
-        return;
+      ids = igAccounts.map((a) => a.id);
+      if (ids.length === 0) {
+        const { data: accs } = await supabase
+          .from("ig_accounts")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("is_active", true);
+        ids = (accs ?? []).map((a) => a.id);
+        if (ids.length === 0) { setIsLoading(false); return; }
       }
     }
+    q = q.in("ig_account_id", ids);
 
     if (filterType !== "all") q = q.eq("action_type", filterType);
     if (filterStatus !== "all") q = q.eq("status", filterStatus);
@@ -102,48 +104,53 @@ export default function Actions() {
 
   // Realtime subscription — filtra por ig_account_id (mais preciso que user_id)
   useEffect(() => {
-    if (!user || igAccounts.length === 0) return;
+    if (!user) return;
 
-    // Realtime: subscribe per account (Supabase only supports eq filter)
-    const accountIds = filterAccountId !== "all"
-      ? [filterAccountId]
-      : igAccounts.map((a) => a.id);
+    const realtimeFilter = filterAccountId !== "all"
+      ? `ig_account_id=eq.${filterAccountId}`
+      : undefined;
 
-    const channels = accountIds.map((accId) => {
-      const realtimeFilter = `ig_account_id=eq.${accId}`;
+    const channelOpts: Parameters<typeof supabase.channel>[1] = undefined;
+    const pgConfig: Record<string, unknown> = {
+      event: "INSERT",
+      schema: "public",
+      table: "action_log",
+    };
+    if (realtimeFilter) pgConfig.filter = realtimeFilter;
 
-      return supabase
-        .channel(`actions-realtime-${user.id}-${accId}`)
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "action_log", filter: realtimeFilter },
-          (payload) => {
-            const newRow = payload.new as ActionRow;
+    const channel = supabase
+      .channel(`actions-realtime-${user.id}-${filterAccountId}`)
+      .on(
+        "postgres_changes" as any,
+        pgConfig as any,
+        (payload: any) => {
+          const newRow = payload.new as ActionRow;
 
-            const matchesType = filterType === "all" || newRow.action_type === filterType;
-            const matchesStatus = filterStatus === "all" || newRow.status === filterStatus;
-            const matchesAccount = filterAccountId === "all" || newRow.ig_account_id === filterAccountId;
-            if (!matchesType || !matchesStatus || !matchesAccount) return;
+          const matchesType = filterType === "all" || newRow.action_type === filterType;
+          const matchesStatus = filterStatus === "all" || newRow.status === filterStatus;
+          const matchesAccount = filterAccountId === "all"
+            ? igAccounts.map((a) => a.id).includes(newRow.ig_account_id ?? "")
+            : newRow.ig_account_id === filterAccountId;
+          if (!matchesType || !matchesStatus || !matchesAccount) return;
 
-            setActions((prev) => {
-              const withNew = [{ ...newRow, isNew: true }, ...prev].slice(0, MAX_ACTIONS);
-              return withNew;
-            });
+          setActions((prev) => {
+            const withNew = [{ ...newRow, isNew: true }, ...prev].slice(0, MAX_ACTIONS);
+            return withNew;
+          });
 
-            const timer = setTimeout(() => {
-              setActions((prev) =>
-                prev.map((a) => (a.id === newRow.id ? { ...a, isNew: false } : a))
-              );
-              newBadgeTimers.current.delete(newRow.id);
-            }, 3000);
-            newBadgeTimers.current.set(newRow.id, timer);
-          }
-        )
-        .subscribe();
-    });
+          const timer = setTimeout(() => {
+            setActions((prev) =>
+              prev.map((a) => (a.id === newRow.id ? { ...a, isNew: false } : a))
+            );
+            newBadgeTimers.current.delete(newRow.id);
+          }, 3000);
+          newBadgeTimers.current.set(newRow.id, timer);
+        }
+      )
+      .subscribe();
 
     return () => {
-      channels.forEach((ch) => supabase.removeChannel(ch));
+      supabase.removeChannel(channel);
       newBadgeTimers.current.forEach((t) => clearTimeout(t));
       newBadgeTimers.current.clear();
     };
