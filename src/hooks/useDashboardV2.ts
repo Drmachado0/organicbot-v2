@@ -118,6 +118,7 @@ export function useDashboardV2(): DashboardData {
   const [growthHistory, setGrowthHistory] = useState<GrowthPoint[]>([]);
   const [pendingQueueCount, setPendingQueueCount] = useState(0);
   const [queueDoneCount, setQueueDoneCount] = useState(0);
+  const [queueTotalCount, setQueueTotalCount] = useState(0);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [recentActions, setRecentActions] = useState<ActionLogRow[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -149,6 +150,7 @@ export function useDashboardV2(): DashboardData {
         growthRes,
         queueRes,
         queueDoneRes,
+        queueTotalRes,
         sessionsRes,
         actionsRes,
         campaignsRes,
@@ -173,6 +175,12 @@ export function useDashboardV2(): DashboardData {
           : Promise.resolve({ data: [], count: 0, error: null }),
         accountId
           ? supabase.from("target_queue").select("id", { count: "exact", head: true }).eq("ig_account_id", accountId).eq("status", "done")
+          : Promise.resolve({ data: [], count: 0, error: null }),
+        accountId
+          ? supabase
+              .from("target_queue")
+              .select("id", { count: "exact", head: true })
+              .eq("ig_account_id", accountId)
           : Promise.resolve({ data: [], count: 0, error: null }),
         accountId
           ? supabase.from("session_stats").select("id, session_start, session_end, follows_count, unfollows_count, likes_count, errors_count").eq("ig_account_id", accountId).order("session_end", { ascending: false }).limit(50)
@@ -230,6 +238,7 @@ export function useDashboardV2(): DashboardData {
 
       setPendingQueueCount(queueRes.count || 0);
       setQueueDoneCount(queueDoneRes.count || 0);
+      setQueueTotalCount(queueTotalRes?.count ?? ((queueRes.count || 0) + (queueDoneRes.count || 0)));
       // Deduplicate sessions by session_start (extension may insert multiple rows per session)
       const rawSessions = (sessionsRes.data as SessionRow[]) || [];
       const sessionMap = new Map<string, SessionRow>();
@@ -413,7 +422,7 @@ export function useDashboardV2(): DashboardData {
     growthHistory,
     pendingQueueCount,
     queueDoneCount,
-    queueTotalCount: pendingQueueCount + queueDoneCount,
+    queueTotalCount,
     sessions,
     recentActions,
     campaigns,
