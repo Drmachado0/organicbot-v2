@@ -610,7 +610,11 @@ export default function QueuePage() {
     ? formatDistanceToNow(new Date(account.last_heartbeat), { addSuffix: true, locale: ptBR })
     : "nunca";
 
-  const isOnline = account?.bot_online ?? false;
+  const isOnline = (() => {
+    if (!account?.bot_online || !account?.last_heartbeat) return false;
+    const diff = Date.now() - new Date(account.last_heartbeat).getTime();
+    return diff < 6 * 60 * 1000;
+  })();
 
   // ── Render ───────────────────────────────────────────────────────────────
 
