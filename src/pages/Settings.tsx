@@ -1341,7 +1341,7 @@ export default function BotSettings() {
                 if (settings.follow_daily_limit > cap) {
                   return (
                     <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: "hsl(42 96% 56% / 0.1)", border: "1px solid hsl(42 96% 56% / 0.3)", color: "hsl(42 96% 56%)" }}>
-                      ⚠️ O limite de follow ({settings.follow_daily_limit}/dia) excede o cap do preset <strong>{activePreset}</strong> ({cap}/dia). A extensão aplicará o limite menor ({cap}/dia).
+                      ⚠️ O limite de follow ({settings.follow_daily_limit}/dia) excede o cap do preset <strong>{activePreset}</strong> ({cap}/dia). Contas mais novas têm maior risco acima desse limite.
                     </div>
                   );
                 }
