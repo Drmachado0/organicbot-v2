@@ -233,7 +233,10 @@ export type Database = {
           bot_status: string | null
           bridge_link_token: string | null
           bridge_version: string | null
+          cooldown_escalation: number | null
+          cooldown_remaining_minutes: number | null
           created_at: string | null
+          daily_heat: number | null
           delay_max: number | null
           delay_min: number | null
           device_id: string | null
@@ -263,7 +266,10 @@ export type Database = {
           bot_status?: string | null
           bridge_link_token?: string | null
           bridge_version?: string | null
+          cooldown_escalation?: number | null
+          cooldown_remaining_minutes?: number | null
           created_at?: string | null
+          daily_heat?: number | null
           delay_max?: number | null
           delay_min?: number | null
           device_id?: string | null
@@ -293,7 +299,10 @@ export type Database = {
           bot_status?: string | null
           bridge_link_token?: string | null
           bridge_version?: string | null
+          cooldown_escalation?: number | null
+          cooldown_remaining_minutes?: number | null
           created_at?: string | null
+          daily_heat?: number | null
           delay_max?: number | null
           delay_min?: number | null
           device_id?: string | null
