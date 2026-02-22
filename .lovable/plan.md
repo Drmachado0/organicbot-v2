@@ -1,31 +1,39 @@
 
+# Sincronizar Presets da Pagina Extensao com Configuracoes Reais
 
-# Atualizar Pagina da Extensao para Sincronizar com Organic Pro
+## Problema
+A pagina `/extension` mostra presets de seguranca com valores fixos (hardcoded), enquanto a pagina `/settings` permite editar esses presets e salva no banco de dados. A extensao Chrome le os valores reais do banco, entao a pagina de Extensao esta desatualizada em relacao ao que realmente esta configurado.
 
-## Resumo
+## Solucao
+Substituir os presets hardcoded na pagina Extension por dados reais lidos de `user_settings.settings_json` e `ig_accounts`, mostrando os limites e delays que estao efetivamente configurados.
 
-A pagina da Extensao (`/extension`) ainda usa o nome antigo "Organic Automator" no subtitulo, enquanto o resto do app (sidebar, login) ja usa "Organic Pro". Alem disso, o aviso sobre URL antiga pode ser simplificado ja que a URL correta (`https://organicbot.lovable.app`) ja esta configurada.
+## O que muda para o usuario
+- A secao "Presets de Seguranca" na pagina Extensao vai mostrar os valores reais configurados em Settings
+- Se o usuario editou os presets (ex: mudou Follow de 40 para 60), a pagina Extensao reflete isso
+- Tambem mostra os limites atuais da conta ativa (delay, session, etc.)
 
-## Alteracoes
-
-### 1. `src/pages/Extension.tsx` -- Atualizar branding
-
-- **Linha 138**: Trocar `"Organic Automator — integração com o Instagram"` por `"Organic Pro — integração com o Instagram"`
-- O `DASHBOARD_URL` ja esta correto (`https://organicbot.lovable.app`), nao precisa mudar
-
-### 2. `src/pages/Settings.tsx` -- Verificar consistencia
-
-- As referencias a `dashboard_url: "https://organicbot.lovable.app"` nas linhas 958 e 1176 ja estao corretas
-- O campo `dont_unfollow_non_organicbot` e um nome de campo no banco de dados e nao deve ser renomeado (quebraria a extensao)
-
-## O que NAO precisa mudar
-
-- **`DASHBOARD_URL`** -- ja aponta para `https://organicbot.lovable.app` (URL publicada correta)
-- **`ZIP_URL`** -- continua apontando para o repositorio GitHub correto
-- **Campos do banco** (`dont_unfollow_non_organicbot`) -- sao nomes tecnicos que a extensao Chrome le diretamente; renomear quebraria a sincronizacao
-- **Sidebar e Auth** -- ja usam "Organic Pro"
+---
 
 ## Detalhes Tecnicos
 
-A unica alteracao necessaria e trocar o texto "Organic Automator" por "Organic Pro" no subtitulo do header da pagina Extension. E uma mudanca de uma linha.
+### Arquivo: `src/pages/Extension.tsx`
 
+1. **Remover o array `presets` hardcoded** (linhas 86-90)
+
+2. **Adicionar fetch dos dados reais** no `useEffect` existente ou em um novo:
+   - Buscar `user_settings.settings_json` para obter `follow_daily_limit`, `delay_min`, `delay_max`, `max_actions_per_session`, `like_daily_limit`
+   - Opcionalmente buscar `ig_accounts` campos `delay_min`, `delay_max`, `max_actions_per_session` (que sao a fonte de verdade para a extensao)
+
+3. **Exibir card unico "Configuracao Atual"** em vez dos 3 presets estaticos, mostrando:
+   - Follow/dia: valor real de `follow_daily_limit`
+   - Delay: `delay_min`-`delay_max`s
+   - Sessao: `max_actions_per_session` acoes
+   - Link para editar em Settings
+
+4. **Manter os 3 presets como referencia** mas atualizar os valores para refletir os defaults editaveis de `DEFAULT_SAFETY_PRESETS` do Settings, e destacar visualmente qual preset esta mais proximo da configuracao atual.
+
+### Abordagem escolhida
+- Adicionar um novo estado `currentConfig` que busca do Supabase
+- Mostrar um card principal com a configuracao ativa real
+- Abaixo, manter os 3 presets como referencia informativa (lidos dos defaults, ou tambem do settings_json se o usuario os editou)
+- Adicionar botao "Ir para Configuracoes" para editar
