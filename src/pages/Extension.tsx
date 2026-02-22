@@ -135,7 +135,7 @@ export default function ExtensionPage() {
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight">Extensão Chrome</h1>
-              <p className="text-sm text-muted-foreground">Organic Automator — integração com o Instagram</p>
+              <p className="text-sm text-muted-foreground">Organic Pro — integração com o Instagram</p>
             </div>
           </div>
         </header>
