@@ -41,7 +41,8 @@ const statusConfig = {
   offline: { label: "Extensão offline", color: "hsl(215 20% 45%)", bg: "hsl(215 20% 45% / 0.08)" },
 };
 
-const ZIP_URL = "https://github.com/Drmachado0/extensao/archive/refs/heads/main.zip";
+const EXTENSION_VERSION = "v1.0.0";
+const ZIP_URL = `https://github.com/Drmachado0/extensao/archive/refs/tags/${EXTENSION_VERSION}.zip`;
 const DASHBOARD_URL = "https://organicbot.lovable.app";
 
 const steps = [
@@ -243,7 +244,7 @@ export default function ExtensionPage() {
           <div className="flex-1 space-y-1">
             <p className="font-bold text-base">Baixar Extensão</p>
             <p className="text-sm text-muted-foreground">
-              Arquivo ZIP — carregue no Chrome/Edge em modo desenvolvedor
+              Versão {EXTENSION_VERSION} — Arquivo ZIP — Chrome/Edge modo desenvolvedor
             </p>
           </div>
           <Button
