@@ -952,7 +952,7 @@ export default function BotSettings() {
       setIsDirty(false);
       setIsLoading(false);
     })();
-  }, [user]);
+  }, [user, selectedAccountId]);
 
   const save = async () => {
     if (!user) return;
@@ -978,7 +978,7 @@ export default function BotSettings() {
         max_actions_per_session: settings.max_actions_per_session,
         bot_schedule: botSchedule as unknown as import("@/integrations/supabase/types").Json,
         updated_at: new Date().toISOString(),
-      }).eq("user_id", user.id).eq("is_active", true);
+      }).eq("id", selectedAccountId ?? "");
       if (accountError) throw accountError;
 
       // 3. Auto-sync: send sync_settings command to all active accounts
