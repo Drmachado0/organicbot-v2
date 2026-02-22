@@ -106,7 +106,7 @@ export interface DashboardData {
   error: string | null;
   toggleBot: () => Promise<void>;
   syncQueue: () => Promise<void>;
-  sendCommand: (command: string) => Promise<void>;
+  sendCommand: (command: string, params?: Record<string, unknown>) => Promise<void>;
   refresh: () => void;
 }
 
@@ -386,12 +386,12 @@ export function useDashboardV2(): DashboardData {
     if (error) throw error;
   }, [activeAccountId]);
 
-  const sendCommand = useCallback(async (command: string) => {
+  const sendCommand = useCallback(async (command: string, params?: Record<string, unknown>) => {
     if (!activeAccountId) return;
     const { error } = await supabase.rpc("send_bot_command", {
       p_ig_account_id: activeAccountId,
       p_command: command,
-      p_params: {},
+      p_params: (params ?? {}) as unknown as import("@/integrations/supabase/types").Json,
     });
     if (error) throw error;
   }, [activeAccountId]);
