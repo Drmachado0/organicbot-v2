@@ -17,12 +17,13 @@ export function useBotOfflineAlert(user: User | null) {
     // Seed initial states so we don't false-fire on first load
     supabase
       .from("ig_accounts")
-      .select("id, ig_username, bot_online")
+      .select("id, ig_username, last_heartbeat")
       .eq("user_id", user.id)
       .eq("is_active", true)
       .then(({ data }) => {
         (data ?? []).forEach((acc) => {
-          prevOnline.current[acc.id] = acc.bot_online ?? false;
+          const diff = acc.last_heartbeat ? Date.now() - new Date(acc.last_heartbeat).getTime() : Infinity;
+          prevOnline.current[acc.id] = diff < 10 * 60 * 1000;
         });
       });
 
@@ -40,12 +41,13 @@ export function useBotOfflineAlert(user: User | null) {
           const row = payload.new as {
             id: string;
             ig_username: string;
-            bot_online: boolean | null;
+            last_heartbeat: string | null;
           };
 
           const wasOnline = prevOnline.current[row.id] ?? false;
-          const isNowOffline = !row.bot_online;
-          const isNowOnline = row.bot_online === true;
+          const diff = row.last_heartbeat ? Date.now() - new Date(row.last_heartbeat).getTime() : Infinity;
+          const isNowOnline = diff < 10 * 60 * 1000;
+          const isNowOffline = !isNowOnline;
 
           if (wasOnline && isNowOffline) {
             toast.warning(`@${row.ig_username} — Bot ficou offline`, {
@@ -68,7 +70,7 @@ export function useBotOfflineAlert(user: User | null) {
           }
 
           // Update tracked state
-          prevOnline.current[row.id] = row.bot_online ?? false;
+          prevOnline.current[row.id] = isNowOnline;
         }
       )
       .subscribe();
