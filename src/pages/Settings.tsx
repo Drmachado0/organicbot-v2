@@ -256,13 +256,21 @@ interface ToggleRowProps {
   description?: string;
   checked: boolean;
   onCheckedChange: (v: boolean) => void;
+  badge?: string;
 }
 
-function ToggleRow({ label, description, checked, onCheckedChange }: ToggleRowProps) {
+function ToggleRow({ label, description, checked, onCheckedChange, badge }: ToggleRowProps) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0">
-        <p className="text-sm font-medium">{label}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium">{label}</p>
+          {badge && (
+            <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold" style={{ backgroundColor: "hsl(42 96% 56% / 0.15)", color: "hsl(42 96% 56%)" }}>
+              {badge}
+            </span>
+          )}
+        </div>
         {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} className="flex-shrink-0 mt-0.5" />
@@ -807,7 +815,7 @@ function ExtensionSyncSection({ userId }: { userId: string }) {
     { label: "max_actions_per_session", table: "ig_accounts" },
     { label: "bot_schedule (horários)", table: "ig_accounts" },
     { label: "Filtros de unfollow", table: "user_settings" },
-    { label: "Randomização de delays", table: "user_settings" },
+    
     { label: "Limites diários follow/unfollow/like", table: "user_settings" },
   ];
 
@@ -1561,42 +1569,48 @@ export default function BotSettings() {
               <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: "hsl(42 96% 56% / 0.08)", border: "1px solid hsl(42 96% 56% / 0.2)", color: "hsl(42 96% 56%)" }}>
                 ⚠️ Estas configurações serão ativadas em uma atualização futura da extensão.
               </div>
-              <div className="space-y-4 opacity-50 cursor-not-allowed pointer-events-none">
+              <div className="space-y-4 opacity-50 pointer-events-none">
                 <ToggleRow
                   label="Não desfazer seguimento de seguidores"
                   description="Protege quem já te segue de receber unfollow"
-                  checked={settings.dont_unfollow_followers}
+                  checked={false}
                   onCheckedChange={() => {}}
+                  badge="Em breve"
                 />
                 <ToggleRow
                   label="Não desfazer seguimento recente"
                   description="Protege seguimentos feitos nos últimos dias"
                   checked={false}
                   onCheckedChange={() => {}}
+                  badge="Em breve"
                 />
                 <ToggleRow
                   label="Não desfazer seguimento de não-organicbot"
                   description="Protege contas que não foram seguidas pelo bot"
                   checked={false}
                   onCheckedChange={() => {}}
+                  badge="Em breve"
                 />
                 <ToggleRow
                   label="Não bloquear contas que passam nos filtros"
                   description="Evita bloquear contas que atendem os critérios"
                   checked={false}
                   onCheckedChange={() => {}}
+                  badge="Em breve"
                 />
                 <ToggleRow
                   label="Não desfazer seguimento de contas nos filtros"
                   description="Protege contas que correspondem aos filtros ativos"
                   checked={false}
                   onCheckedChange={() => {}}
+                  badge="Em breve"
                 />
                 <ToggleRow
                   label="Seguir contas já tentadas anteriormente"
                   description="Permite re-seguir contas já processadas"
                   checked={false}
                   onCheckedChange={() => {}}
+                  badge="Em breve"
                 />
               </div>
             </SectionCard>
