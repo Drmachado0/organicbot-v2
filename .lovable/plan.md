@@ -1,34 +1,39 @@
 
-# Corrigir "Atualizar Foto" - Usar Edge Function Diretamente
+# Sincronizar Presets da Pagina Extensao com Configuracoes Reais
 
 ## Problema
-A extensao nao reconhece o comando `update_profile_pic` (retorna "Comando desconhecido"). O botao atual envia o comando via `send_bot_command`, que depende da extensao processar -- mas ela nao suporta esse comando.
+A pagina `/extension` mostra presets de seguranca com valores fixos (hardcoded), enquanto a pagina `/settings` permite editar esses presets e salva no banco de dados. A extensao Chrome le os valores reais do banco, entao a pagina de Extensao esta desatualizada em relacao ao que realmente esta configurado.
 
 ## Solucao
-Alterar o botao "Atualizar Foto" para chamar diretamente a edge function `fetch-profile-pic` ao inves de enviar um comando para a extensao. A edge function ja existe e funciona: busca a foto via API publica do Instagram e atualiza o banco.
+Substituir os presets hardcoded na pagina Extension por dados reais lidos de `user_settings.settings_json` e `ig_accounts`, mostrando os limites e delays que estao efetivamente configurados.
 
-## Alteracoes
+## O que muda para o usuario
+- A secao "Presets de Seguranca" na pagina Extensao vai mostrar os valores reais configurados em Settings
+- Se o usuario editou os presets (ex: mudou Follow de 40 para 60), a pagina Extensao reflete isso
+- Tambem mostra os limites atuais da conta ativa (delay, session, etc.)
 
-### `src/pages/Queue.tsx`
-- Criar uma funcao `fetchProfilePic` que chama `supabase.functions.invoke("fetch-profile-pic", { body: { ig_account_id, username } })`
-- Alterar o botao "Atualizar Foto" (linha 674) para chamar `fetchProfilePic` ao inves de `sendCmd("update_profile_pic")`
-- Tratar erro/sucesso com toast
-- O realtime ja cuidara de atualizar a foto na UI quando o banco for atualizado
+---
 
-### Detalhes Tecnicos
+## Detalhes Tecnicos
 
-```text
-Fluxo corrigido:
-[Botao "Atualizar Foto"]
-     |
-     v
-supabase.functions.invoke("fetch-profile-pic", { ig_account_id, username })
-     |
-     v
-Edge Function busca foto via API Instagram --> UPDATE ig_accounts
-     |
-     v
-Realtime subscription atualiza UI automaticamente
-```
+### Arquivo: `src/pages/Extension.tsx`
 
-A funcao `fetchProfilePic` usara o `accountId` e `selectedAccount.ig_username` ja disponiveis no componente. O loading state pode reutilizar `loadingCmd` com valor `"update_profile_pic"` para manter consistencia visual.
+1. **Remover o array `presets` hardcoded** (linhas 86-90)
+
+2. **Adicionar fetch dos dados reais** no `useEffect` existente ou em um novo:
+   - Buscar `user_settings.settings_json` para obter `follow_daily_limit`, `delay_min`, `delay_max`, `max_actions_per_session`, `like_daily_limit`
+   - Opcionalmente buscar `ig_accounts` campos `delay_min`, `delay_max`, `max_actions_per_session` (que sao a fonte de verdade para a extensao)
+
+3. **Exibir card unico "Configuracao Atual"** em vez dos 3 presets estaticos, mostrando:
+   - Follow/dia: valor real de `follow_daily_limit`
+   - Delay: `delay_min`-`delay_max`s
+   - Sessao: `max_actions_per_session` acoes
+   - Link para editar em Settings
+
+4. **Manter os 3 presets como referencia** mas atualizar os valores para refletir os defaults editaveis de `DEFAULT_SAFETY_PRESETS` do Settings, e destacar visualmente qual preset esta mais proximo da configuracao atual.
+
+### Abordagem escolhida
+- Adicionar um novo estado `currentConfig` que busca do Supabase
+- Mostrar um card principal com a configuracao ativa real
+- Abaixo, manter os 3 presets como referencia informativa (lidos dos defaults, ou tambem do settings_json se o usuario os editou)
+- Adicionar botao "Ir para Configuracoes" para editar

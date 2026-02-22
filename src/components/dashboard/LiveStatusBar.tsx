@@ -18,8 +18,10 @@ function getModeLabel(mode: string | null): string {
   const map: Record<string, string> = {
     seguir_curtir: "Follow + Like",
     seguir: "Follow Mode",
+    deixar_seguir: "Unfollow Mode",
     desseguir: "Unfollow Mode",
     curtir: "Like Mode",
+    ver_story: "Ver Stories",
     mixed: "Mixed Mode",
   };
   return map[mode] ?? mode;

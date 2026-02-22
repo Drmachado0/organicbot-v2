@@ -231,6 +231,7 @@ export type Database = {
           bot_online: boolean | null
           bot_schedule: Json | null
           bot_status: string | null
+          bridge_link_token: string | null
           bridge_version: string | null
           created_at: string | null
           delay_max: number | null
@@ -257,6 +258,7 @@ export type Database = {
           bot_online?: boolean | null
           bot_schedule?: Json | null
           bot_status?: string | null
+          bridge_link_token?: string | null
           bridge_version?: string | null
           created_at?: string | null
           delay_max?: number | null
@@ -283,6 +285,7 @@ export type Database = {
           bot_online?: boolean | null
           bot_schedule?: Json | null
           bot_status?: string | null
+          bridge_link_token?: string | null
           bridge_version?: string | null
           created_at?: string | null
           delay_max?: number | null

@@ -11,6 +11,7 @@ interface Props {
   isLoading: boolean;
   igAccountId?: string | null;
   lastHeartbeat?: string | null;
+  limits?: { follow: number; unfollow: number; like: number };
 }
 
 interface Alert {
@@ -18,7 +19,7 @@ interface Alert {
   message: string;
 }
 
-const LIMITS = { follow: 150, unfollow: 120, like: 300 };
+
 
 const LEVEL_CONFIG = {
   ok:    { Icon: CheckCircle,   color: "hsl(152 72% 48%)", bg: "hsl(152 72% 48% / 0.1)" },
@@ -27,8 +28,13 @@ const LEVEL_CONFIG = {
   info:  { Icon: Bell,          color: "hsl(252 62% 60%)", bg: "hsl(252 62% 60% / 0.1)" },
 };
 
-export function HealthAlertsCard({ todayActions, pendingQueueCount, botOnline, isLoading, igAccountId, lastHeartbeat }: Props) {
+export function HealthAlertsCard({ todayActions, pendingQueueCount, botOnline, isLoading, igAccountId, lastHeartbeat, limits }: Props) {
   const [errorRate, setErrorRate] = useState<number | null>(null);
+  const LIMITS = {
+    follow: limits?.follow ?? 150,
+    unfollow: limits?.unfollow ?? 100,
+    like: limits?.like ?? 300,
+  };
 
   const fetchErrorRate = useCallback(async () => {
     if (!igAccountId) return;

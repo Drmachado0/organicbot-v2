@@ -19,7 +19,9 @@ function botModeLabel(mode: string | null): string {
     seguir_curtir: "Seguir + Curtir",
     seguir: "Só Seguir",
     curtir: "Só Curtir",
-    unfollow: "Unfollow",
+    deixar_seguir: "Unfollow",
+    desseguir: "Unfollow",
+    ver_story: "Ver Stories",
   };
   return mode ? (map[mode] ?? mode) : "—";
 }
@@ -106,7 +108,11 @@ export function AccountCardsPanel({ accounts, activeAccountId, isLoading, onSele
     <div className="flex gap-3 overflow-x-auto pb-1 animate-fade-in">
       {liveAccounts.map((acc) => {
         const isActive = acc.id === activeAccountId;
-        const online = acc.bot_online === true;
+        const online = (() => {
+          if (!acc.bot_online || !acc.last_heartbeat) return false;
+          const diff = Date.now() - new Date(acc.last_heartbeat).getTime();
+          return diff < 6 * 60 * 1000;
+        })();
         const pending = (acc.queue_total ?? 0) - (acc.queue_processed ?? 0);
 
         return (

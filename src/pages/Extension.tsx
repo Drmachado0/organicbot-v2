@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +18,8 @@ import {
   Shield,
   Clock,
   LogIn,
+  Settings,
+  ExternalLink,
 } from "lucide-react";
 
 interface IgAccount {
@@ -25,6 +28,42 @@ interface IgAccount {
   last_heartbeat: string | null;
   bridge_version: string | null;
   bot_online: boolean | null;
+  delay_min: number | null;
+  delay_max: number | null;
+  max_actions_per_session: number | null;
+}
+
+interface CurrentConfig {
+  follow_daily_limit: number;
+  like_daily_limit: number;
+  delay_min: number;
+  delay_max: number;
+  max_actions_per_session: number;
+  unfollow_daily_limit: number;
+}
+
+const DEFAULT_CONFIG: CurrentConfig = {
+  follow_daily_limit: 150,
+  like_daily_limit: 300,
+  delay_min: 25,
+  delay_max: 45,
+  max_actions_per_session: 50,
+  unfollow_daily_limit: 100,
+};
+
+const REFERENCE_PRESETS = [
+  { id: "nova", name: "Conta Nova", badge: "🟢 Conservador", follows: 40, delay: "45–90s", session: 20, desc: "< 3 meses · risco mínimo" },
+  { id: "media", name: "Conta Média", badge: "🟡 Moderado", follows: 100, delay: "25–45s", session: 50, desc: "3–12 meses · crescimento estável" },
+  { id: "madura", name: "Conta Madura", badge: "🔴 Agressivo", follows: 200, delay: "15–25s", session: 100, desc: "> 12 meses · máximo crescimento" },
+];
+
+function getClosestPreset(config: CurrentConfig): string {
+  const diffs = REFERENCE_PRESETS.map((p) => ({
+    id: p.id,
+    diff: Math.abs(config.follow_daily_limit - p.follows) + Math.abs(config.max_actions_per_session - p.session),
+  }));
+  diffs.sort((a, b) => a.diff - b.diff);
+  return diffs[0].id;
 }
 
 function getExtensionStatus(lastHeartbeat: string | null): "online" | "away" | "offline" {
@@ -41,6 +80,7 @@ const statusConfig = {
   offline: { label: "Extensão offline", color: "hsl(215 20% 45%)", bg: "hsl(215 20% 45% / 0.08)" },
 };
 
+const EXTENSION_VERSION = "v1.0.0";
 const ZIP_URL = "https://github.com/Drmachado0/extensao/archive/refs/heads/main.zip";
 const DASHBOARD_URL = "https://organicbot.lovable.app";
 
@@ -82,28 +122,74 @@ const steps = [
   },
 ];
 
-const presets = [
-  { name: "Conta Nova", badge: "🟢 Conservador", follow: "40/dia", delay: "45–90s", desc: "Para contas com menos de 3 meses. Risco mínimo de bloqueio." },
-  { name: "Conta Média", badge: "🟡 Moderado", follow: "100/dia", delay: "25–45s", desc: "Para contas ativas entre 3–12 meses. Crescimento estável." },
-  { name: "Conta Madura", badge: "🔴 Agressivo", follow: "200/dia", delay: "15–25s", desc: "Para contas antigas com histórico limpo. Máximo crescimento." },
-];
-
 export default function ExtensionPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [accounts, setAccounts] = useState<IgAccount[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentConfig, setCurrentConfig] = useState<CurrentConfig>(DEFAULT_CONFIG);
+  const [configLoading, setConfigLoading] = useState(true);
 
+  // Fetch accounts and settings
   useEffect(() => {
     if (!user) return;
+
+    // Fetch accounts
     supabase
       .from("ig_accounts")
-      .select("id, ig_username, last_heartbeat, bridge_version, bot_online")
+      .select("id, ig_username, last_heartbeat, bridge_version, bot_online, delay_min, delay_max, max_actions_per_session")
       .eq("user_id", user.id)
       .eq("is_active", true)
       .then(({ data }) => {
         setAccounts((data as IgAccount[]) ?? []);
         setLoading(false);
       });
+
+    // Fetch user_settings for real config
+    supabase
+      .from("user_settings")
+      .select("settings_json")
+      .eq("user_id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        const raw = data?.settings_json as Record<string, unknown> | null;
+        if (raw) {
+          setCurrentConfig({
+            follow_daily_limit: Number(raw.follow_daily_limit ?? DEFAULT_CONFIG.follow_daily_limit),
+            like_daily_limit: Number(raw.like_daily_limit ?? DEFAULT_CONFIG.like_daily_limit),
+            delay_min: Number(raw.delay_min ?? DEFAULT_CONFIG.delay_min),
+            delay_max: Number(raw.delay_max ?? DEFAULT_CONFIG.delay_max),
+            max_actions_per_session: Number(raw.max_actions_per_session ?? DEFAULT_CONFIG.max_actions_per_session),
+            unfollow_daily_limit: Number(raw.unfollow_daily_limit ?? DEFAULT_CONFIG.unfollow_daily_limit),
+          });
+        }
+        setConfigLoading(false);
+      });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel(`extension-status-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "ig_accounts",
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as IgAccount;
+          setAccounts((prev) =>
+            prev.map((a) => (a.id === row.id ? { ...a, ...row } : a))
+          );
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const refresh = () => {
@@ -135,7 +221,7 @@ export default function ExtensionPage() {
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight">Extensão Chrome</h1>
-              <p className="text-sm text-muted-foreground">Organic Automator — integração com o Instagram</p>
+              <p className="text-sm text-muted-foreground">Organic Pro — integração com o Instagram</p>
             </div>
           </div>
         </header>
@@ -218,7 +304,7 @@ export default function ExtensionPage() {
           <div className="flex-1 space-y-1">
             <p className="font-bold text-base">Baixar Extensão</p>
             <p className="text-sm text-muted-foreground">
-              Arquivo ZIP — carregue no Chrome/Edge em modo desenvolvedor
+              Versão {EXTENSION_VERSION} — Arquivo ZIP — Chrome/Edge modo desenvolvedor
             </p>
           </div>
           <Button
@@ -233,23 +319,21 @@ export default function ExtensionPage() {
           </Button>
         </div>
 
-        {/* ── URL Warning ── */}
-        <div
-          className="rounded-2xl p-4 flex items-start gap-3"
-          style={{ backgroundColor: "hsl(42 96% 56% / 0.08)", border: "1px solid hsl(42 96% 56% / 0.3)" }}
-        >
-          <Zap className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: "hsl(42 96% 56%)" }} />
-          <div className="space-y-1 min-w-0">
-            <p className="text-sm font-semibold" style={{ color: "hsl(42 96% 56%)" }}>URL do Dashboard Atualizada</p>
-            <p className="text-xs text-muted-foreground">
-              O arquivo <code className="bg-muted/40 px-1 rounded">lovable-config.js</code> da extensão pode conter a URL antiga{" "}
-              <code className="bg-muted/40 px-1 rounded">organicpublic.lovable.app</code>. A URL correta é:
-            </p>
-            <p className="text-xs font-mono font-semibold" style={{ color: "hsl(152 72% 48%)" }}>{DASHBOARD_URL}</p>
-            <p className="text-xs text-muted-foreground/70">
-              Use esta URL ao fazer login na extensão. Se o botão "Abrir Dashboard" abrir a URL errada, acesse diretamente pelo navegador.
-            </p>
+        <div className="glass-card rounded-2xl p-4 flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold">Abrir Dashboard</p>
+            <p className="text-xs text-muted-foreground">Acesse o painel de controle do OrganicBot</p>
           </div>
+          <Button
+            asChild
+            className="gap-2 font-semibold shrink-0"
+            variant="outline"
+          >
+            <a href={DASHBOARD_URL} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="h-4 w-4" />
+              Abrir Dashboard
+            </a>
+          </Button>
         </div>
 
 
@@ -283,31 +367,87 @@ export default function ExtensionPage() {
           </div>
         </div>
 
-        {/* ── Safety Presets ── */}
+        {/* ── Current Config + Safety Presets ── */}
         <div className="glass-card rounded-2xl p-5 space-y-4">
-          <div className="flex items-center gap-2">
-            <Shield className="h-4 w-4 text-muted-foreground" />
-            <p className="text-sm font-semibold">Presets de Segurança</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-muted-foreground" />
+              <p className="text-sm font-semibold">Configuração Atual</p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs"
+              onClick={() => navigate("/settings")}
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Ir para Configurações
+            </Button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {presets.map((p) => (
-              <div
-                key={p.name}
-                className="rounded-xl px-4 py-4 space-y-2"
-                style={{ backgroundColor: "hsl(220 18% 10%)", border: "1px solid hsl(220 18% 18%)" }}
-              >
-                <p className="text-xs font-semibold text-muted-foreground">{p.badge}</p>
-                <p className="font-bold text-sm">{p.name}</p>
-                <div className="text-xs text-muted-foreground space-y-0.5">
-                  <p>Follow: <span className="text-foreground font-medium">{p.follow}</span></p>
-                  <p>Delay: <span className="text-foreground font-medium">{p.delay}</span></p>
-                </div>
-                <p className="text-xs text-muted-foreground/60">{p.desc}</p>
+
+          {/* Current active config */}
+          {configLoading ? (
+            <div className="h-20 rounded-xl bg-muted/20 animate-pulse" />
+          ) : (
+            <div
+              className="rounded-xl px-4 py-4 space-y-3"
+              style={{ backgroundColor: "hsl(152 72% 48% / 0.06)", border: "1px solid hsl(152 72% 48% / 0.25)" }}
+            >
+              <div className="flex items-center gap-2">
+                <Zap className="h-4 w-4" style={{ color: "hsl(152 72% 48%)" }} />
+                <p className="text-sm font-bold" style={{ color: "hsl(152 72% 48%)" }}>Valores Ativos na Extensão</p>
               </div>
-            ))}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: "Follow/dia", value: currentConfig.follow_daily_limit },
+                  { label: "Like/dia", value: currentConfig.like_daily_limit },
+                  { label: "Delay", value: `${currentConfig.delay_min}–${currentConfig.delay_max}s` },
+                  { label: "Sessão", value: `${currentConfig.max_actions_per_session} ações` },
+                ].map((item) => (
+                  <div key={item.label} className="text-center">
+                    <p className="text-xs text-muted-foreground">{item.label}</p>
+                    <p className="text-sm font-bold">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Reference presets */}
+          <p className="text-xs text-muted-foreground font-medium pt-1">Presets de referência:</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {REFERENCE_PRESETS.map((p) => {
+              const isClosest = !configLoading && getClosestPreset(currentConfig) === p.id;
+              return (
+                <div
+                  key={p.id}
+                  className="rounded-xl px-4 py-4 space-y-2 transition-colors"
+                  style={{
+                    backgroundColor: isClosest ? "hsl(152 72% 48% / 0.08)" : "hsl(220 18% 10%)",
+                    border: isClosest ? "1px solid hsl(152 72% 48% / 0.4)" : "1px solid hsl(220 18% 18%)",
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-muted-foreground">{p.badge}</p>
+                    {isClosest && (
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color: "hsl(152 72% 48%)", backgroundColor: "hsl(152 72% 48% / 0.12)" }}>
+                        Atual
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-bold text-sm">{p.name}</p>
+                  <div className="text-xs text-muted-foreground space-y-0.5">
+                    <p>Follow: <span className="text-foreground font-medium">{p.follows}/dia</span></p>
+                    <p>Delay: <span className="text-foreground font-medium">{p.delay}</span></p>
+                    <p>Sessão: <span className="text-foreground font-medium">{p.session} ações</span></p>
+                  </div>
+                  <p className="text-xs text-muted-foreground/60">{p.desc}</p>
+                </div>
+              );
+            })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Configure os limites em <strong>Configurações → Limites Diários</strong>. A extensão lê esses valores automaticamente a cada 2 minutos.
+            Os valores ativos são lidos de <strong>Configurações</strong>. A extensão sincroniza automaticamente a cada 2 minutos.
           </p>
         </div>
 
