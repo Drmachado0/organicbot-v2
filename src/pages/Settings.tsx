@@ -44,6 +44,7 @@ import {
   Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -516,15 +517,16 @@ function BridgeTokenSection({ accounts }: { accounts: { id: string; ig_username:
       </div>
 
       {accounts.length > 1 && (
-        <select
-          value={selectedId}
-          onChange={(e) => { setSelectedId(e.target.value); setToken(null); }}
-          className="w-full h-9 rounded-md border border-border/60 bg-background px-3 text-sm"
-        >
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>@{a.ig_username}</option>
-          ))}
-        </select>
+        <Select value={selectedId} onValueChange={(v) => { setSelectedId(v); setToken(null); }}>
+          <SelectTrigger className="w-full h-9 border-border/60 bg-background text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {accounts.map((a) => (
+              <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       )}
 
       {token && (
@@ -842,15 +844,16 @@ function ExtensionSyncSection({ userId }: { userId: string }) {
       {accounts.length > 0 && (
         <div className="flex items-center gap-3 flex-wrap">
           {accounts.length > 1 ? (
-            <select
-              value={selectedId}
-              onChange={(e) => setSelectedId(e.target.value)}
-              className="h-9 rounded-md border border-border/60 bg-background px-3 text-sm flex-1"
-            >
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>@{a.ig_username}</option>
-              ))}
-            </select>
+            <Select value={selectedId} onValueChange={setSelectedId}>
+              <SelectTrigger className="h-9 border-border/60 bg-background text-sm flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>@{a.ig_username}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           ) : (
             <span className="text-sm font-semibold flex-1">@{selectedAccount?.ig_username}</span>
           )}
@@ -1011,7 +1014,12 @@ export default function BotSettings() {
         })() as unknown as import("@/integrations/supabase/types").Json,
         updated_at: new Date().toISOString(),
       } as any).eq("id", selectedAccountId ?? "");
-      if (accountError) throw accountError;
+      if (accountError) {
+        toast.warning("Configurações salvas, mas falha ao sincronizar com a extensão. Use Forçar sync.");
+        setIsDirty(false);
+        setIsSaving(false);
+        return;
+      }
 
       // 3. Auto-sync: send sync_settings command to all active accounts
       const { data: activeAccounts } = await supabase
@@ -1096,17 +1104,18 @@ export default function BotSettings() {
         <div className="flex items-center gap-3 mb-4 animate-fade-in">
           <Instagram className="h-4 w-4 text-muted-foreground" />
           <p className="text-sm font-medium">Configurando conta:</p>
-          <select
-            value={selectedAccountId}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
-            className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm"
-          >
-            {accountsList.map((a) => (
-              <option key={a.id} value={a.id}>
-                @{a.ig_username}
-              </option>
-            ))}
-          </select>
+          <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+            <SelectTrigger className="flex-1 bg-background border border-border rounded-lg text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {accountsList.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  @{a.ig_username}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )}
 
@@ -1316,6 +1325,28 @@ export default function BotSettings() {
               title="Limites Diários"
               icon={<Zap className="h-4 w-4" style={{ color: "hsl(152 72% 48%)" }} />}
             >
+              {(() => {
+                const caps: Record<string, number> = { nova: 25, media: 60, madura: 100 };
+                const presetDiffs = [
+                  { id: "nova", follows: 40, session: 20 },
+                  { id: "media", follows: 100, session: 50 },
+                  { id: "madura", follows: 200, session: 100 },
+                ].map((p) => ({
+                  id: p.id,
+                  diff: Math.abs(settings.follow_daily_limit - p.follows) / 200 + Math.abs(settings.max_actions_per_session - p.session) / 100,
+                }));
+                presetDiffs.sort((a, b) => a.diff - b.diff);
+                const activePreset = presetDiffs[0].id;
+                const cap = caps[activePreset] ?? 150;
+                if (settings.follow_daily_limit > cap) {
+                  return (
+                    <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: "hsl(42 96% 56% / 0.1)", border: "1px solid hsl(42 96% 56% / 0.3)", color: "hsl(42 96% 56%)" }}>
+                      ⚠️ O limite de follow ({settings.follow_daily_limit}/dia) excede o cap do preset <strong>{activePreset}</strong> ({cap}/dia). A extensão aplicará o limite menor ({cap}/dia).
+                    </div>
+                  );
+                }
+                return null;
+              })()}
               <LimitSlider
                 label="Follow"
                 icon={<UserPlus className="h-3.5 w-3.5" style={{ color: "hsl(152 72% 48%)" }} />}
@@ -1622,6 +1653,7 @@ export default function BotSettings() {
                   checked={settings.email_notifications}
                   onCheckedChange={(v) => set("email_notifications", v)}
                 />
+                <p className="text-xs text-muted-foreground/70 mt-1 pl-1">📧 O envio de emails de notificação está em desenvolvimento e será ativado em breve.</p>
               </div>
 
               {/* Summary card */}
