@@ -1,39 +1,48 @@
 
-# Sincronizar Presets da Pagina Extensao com Configuracoes Reais
+# Corrigir erro "safety_preset does not exist" que impede a extensao de rodar
 
-## Problema
-A pagina `/extension` mostra presets de seguranca com valores fixos (hardcoded), enquanto a pagina `/settings` permite editar esses presets e salva no banco de dados. A extensao Chrome le os valores reais do banco, entao a pagina de Extensao esta desatualizada em relacao ao que realmente esta configurado.
+## Problema encontrado
 
-## Solucao
-Substituir os presets hardcoded na pagina Extension por dados reais lidos de `user_settings.settings_json` e `ig_accounts`, mostrando os limites e delays que estao efetivamente configurados.
+Os logs do Postgres mostram repetidamente:
 
-## O que muda para o usuario
-- A secao "Presets de Seguranca" na pagina Extensao vai mostrar os valores reais configurados em Settings
-- Se o usuario editou os presets (ex: mudou Follow de 40 para 60), a pagina Extensao reflete isso
-- Tambem mostra os limites atuais da conta ativa (delay, session, etc.)
+```
+ERROR: column ig_accounts.safety_preset does not exist
+```
+
+A extensao Chrome esta tentando ler ou gravar uma coluna `safety_preset` na tabela `ig_accounts`, mas essa coluna nunca foi criada. Isso causa falha nas queries da extensao, impedindo-a de funcionar.
+
+Alem disso, o comando `set_safety_preset` esta listado como valido no constraint de `bot_commands`, mas nao tem utilidade pratica sem a coluna correspondente.
+
+## O que sera feito
+
+### 1. Adicionar a coluna `safety_preset` na tabela `ig_accounts`
+
+Criar a coluna com valor default `'media'` (o preset intermediario), tipo `text`, nullable. Isso resolve imediatamente o erro da extensao sem precisar alterar o codigo da extensao.
+
+```sql
+ALTER TABLE public.ig_accounts
+  ADD COLUMN IF NOT EXISTS safety_preset text DEFAULT 'media';
+```
+
+### 2. Atualizar o save de Settings para gravar o preset
+
+Na pagina Settings (`src/pages/Settings.tsx`), ao salvar, tambem gravar o `safety_preset` detectado (baseado na configuracao atual) na tabela `ig_accounts`, para que a extensao possa le-lo.
+
+### 3. Nenhuma mudanca na extensao necessaria
+
+A extensao ja tenta ler `safety_preset` -- basta que a coluna exista para o erro parar.
 
 ---
 
-## Detalhes Tecnicos
+## Detalhes tecnicos
+
+### Migracao SQL
+- `ALTER TABLE public.ig_accounts ADD COLUMN IF NOT EXISTS safety_preset text DEFAULT 'media';`
+
+### Arquivo: `src/pages/Settings.tsx`
+- Na funcao `save()`, no update de `ig_accounts` (por volta da linha 974), adicionar `safety_preset` ao objeto de update
+- Calcular o preset mais proximo usando a mesma logica de `getClosestPreset` que ja existe em Extension.tsx
+- Adicionar uma funcao helper `detectPreset(settings)` que retorna `'nova'`, `'media'` ou `'madura'`
 
 ### Arquivo: `src/pages/Extension.tsx`
-
-1. **Remover o array `presets` hardcoded** (linhas 86-90)
-
-2. **Adicionar fetch dos dados reais** no `useEffect` existente ou em um novo:
-   - Buscar `user_settings.settings_json` para obter `follow_daily_limit`, `delay_min`, `delay_max`, `max_actions_per_session`, `like_daily_limit`
-   - Opcionalmente buscar `ig_accounts` campos `delay_min`, `delay_max`, `max_actions_per_session` (que sao a fonte de verdade para a extensao)
-
-3. **Exibir card unico "Configuracao Atual"** em vez dos 3 presets estaticos, mostrando:
-   - Follow/dia: valor real de `follow_daily_limit`
-   - Delay: `delay_min`-`delay_max`s
-   - Sessao: `max_actions_per_session` acoes
-   - Link para editar em Settings
-
-4. **Manter os 3 presets como referencia** mas atualizar os valores para refletir os defaults editaveis de `DEFAULT_SAFETY_PRESETS` do Settings, e destacar visualmente qual preset esta mais proximo da configuracao atual.
-
-### Abordagem escolhida
-- Adicionar um novo estado `currentConfig` que busca do Supabase
-- Mostrar um card principal com a configuracao ativa real
-- Abaixo, manter os 3 presets como referencia informativa (lidos dos defaults, ou tambem do settings_json se o usuario os editou)
-- Adicionar botao "Ir para Configuracoes" para editar
+- Na query de `ig_accounts` (linha 142), adicionar `safety_preset` no select para exibir o preset real salvo na conta (opcional, melhora visual)
