@@ -1,39 +1,49 @@
 
-# Sincronizar Presets da Pagina Extensao com Configuracoes Reais
+
+# Corrigir erro "organic_timings does not exist"
 
 ## Problema
-A pagina `/extension` mostra presets de seguranca com valores fixos (hardcoded), enquanto a pagina `/settings` permite editar esses presets e salva no banco de dados. A extensao Chrome le os valores reais do banco, entao a pagina de Extensao esta desatualizada em relacao ao que realmente esta configurado.
+
+Os logs do Postgres mostram erros repetidos:
+
+```
+ERROR: column ig_accounts.organic_timings does not exist
+```
+
+A extensao Chrome tenta ler/gravar `organic_timings` na tabela `ig_accounts`, mas a coluna nao existe. Mesmo padrao dos erros anteriores (`safety_preset` e `safety_limits`).
 
 ## Solucao
-Substituir os presets hardcoded na pagina Extension por dados reais lidos de `user_settings.settings_json` e `ig_accounts`, mostrando os limites e delays que estao efetivamente configurados.
 
-## O que muda para o usuario
-- A secao "Presets de Seguranca" na pagina Extensao vai mostrar os valores reais configurados em Settings
-- Se o usuario editou os presets (ex: mudou Follow de 40 para 60), a pagina Extensao reflete isso
-- Tambem mostra os limites atuais da conta ativa (delay, session, etc.)
+### 1. Migracao SQL
 
----
+Adicionar a coluna `organic_timings` como `jsonb` com um default sensato. Essa coluna provavelmente armazena os horarios em que o bot deve simular atividade organica (pausas, horarios de pico, etc).
 
-## Detalhes Tecnicos
+```sql
+ALTER TABLE public.ig_accounts
+  ADD COLUMN IF NOT EXISTS organic_timings jsonb
+  DEFAULT '{"morning": true, "afternoon": true, "evening": true, "night": false}'::jsonb;
+```
 
-### Arquivo: `src/pages/Extension.tsx`
+### 2. Atualizar Settings para gravar organic_timings
 
-1. **Remover o array `presets` hardcoded** (linhas 86-90)
+Na funcao `save()` de `src/pages/Settings.tsx`, ao salvar configuracoes, tambem gravar `organic_timings` no update de `ig_accounts` com base no schedule/horarios configurados pelo usuario.
 
-2. **Adicionar fetch dos dados reais** no `useEffect` existente ou em um novo:
-   - Buscar `user_settings.settings_json` para obter `follow_daily_limit`, `delay_min`, `delay_max`, `max_actions_per_session`, `like_daily_limit`
-   - Opcionalmente buscar `ig_accounts` campos `delay_min`, `delay_max`, `max_actions_per_session` (que sao a fonte de verdade para a extensao)
+### 3. Varredura de erros adicionais
 
-3. **Exibir card unico "Configuracao Atual"** em vez dos 3 presets estaticos, mostrando:
-   - Follow/dia: valor real de `follow_daily_limit`
-   - Delay: `delay_min`-`delay_max`s
-   - Sessao: `max_actions_per_session` acoes
-   - Link para editar em Settings
+Apos a migracao, verificar os logs novamente para confirmar que nao ha mais colunas faltando. Se houver, serao corrigidas no mesmo ciclo.
 
-4. **Manter os 3 presets como referencia** mas atualizar os valores para refletir os defaults editaveis de `DEFAULT_SAFETY_PRESETS` do Settings, e destacar visualmente qual preset esta mais proximo da configuracao atual.
+## Detalhes tecnicos
 
-### Abordagem escolhida
-- Adicionar um novo estado `currentConfig` que busca do Supabase
-- Mostrar um card principal com a configuracao ativa real
-- Abaixo, manter os 3 presets como referencia informativa (lidos dos defaults, ou tambem do settings_json se o usuario os editou)
-- Adicionar botao "Ir para Configuracoes" para editar
+### Arquivo: nova migracao SQL
+- `ALTER TABLE public.ig_accounts ADD COLUMN IF NOT EXISTS organic_timings jsonb DEFAULT '{"morning": true, "afternoon": true, "evening": true, "night": false}'::jsonb;`
+
+### Arquivo: `src/pages/Settings.tsx`
+- Na funcao `save()`, adicionar `organic_timings` ao objeto de update de `ig_accounts`
+- Derivar os valores do `bot_schedule` existente (se houver horarios configurados, mapear para os periodos morning/afternoon/evening/night)
+
+### Tipos TypeScript
+- `src/integrations/supabase/types.ts` sera atualizado automaticamente apos a migracao
+
+### Nenhuma mudanca na extensao
+- A extensao ja tenta ler `organic_timings` -- basta que a coluna exista com dados validos
+

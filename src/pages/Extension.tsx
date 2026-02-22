@@ -60,7 +60,9 @@ const REFERENCE_PRESETS = [
 function getClosestPreset(config: CurrentConfig): string {
   const diffs = REFERENCE_PRESETS.map((p) => ({
     id: p.id,
-    diff: Math.abs(config.follow_daily_limit - p.follows) + Math.abs(config.max_actions_per_session - p.session),
+    diff:
+      Math.abs(config.follow_daily_limit - p.follows) / 200 +
+      Math.abs(config.max_actions_per_session - p.session) / 100,
   }));
   diffs.sort((a, b) => a.diff - b.diff);
   return diffs[0].id;
@@ -80,7 +82,7 @@ const statusConfig = {
   offline: { label: "Extensão offline", color: "hsl(215 20% 45%)", bg: "hsl(215 20% 45% / 0.08)" },
 };
 
-const EXTENSION_VERSION = "v1.0.0";
+const EXTENSION_VERSION = "v8.1.1";
 const ZIP_URL = "https://github.com/Drmachado0/extensao/archive/refs/heads/main.zip";
 const DASHBOARD_URL = "https://organicbot.lovable.app";
 
@@ -137,7 +139,7 @@ export default function ExtensionPage() {
     // Fetch accounts
     supabase
       .from("ig_accounts")
-      .select("id, ig_username, last_heartbeat, bridge_version, bot_online, delay_min, delay_max, max_actions_per_session")
+      .select("id, ig_username, last_heartbeat, bridge_version, bot_online, delay_min, delay_max, max_actions_per_session, safety_preset")
       .eq("user_id", user.id)
       .eq("is_active", true)
       .then(({ data }) => {
