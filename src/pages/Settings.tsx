@@ -138,7 +138,7 @@ function weekScheduleToBotSchedule(week: WeekSchedule): object {
   const activeDays = WEEK_DAYS.filter((d) => week[d.key].active);
   return {
     enabled: activeDays.length > 0,
-    timezone: "America/Sao_Paulo",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     days: WEEK_DAYS.reduce((acc, { key }) => {
       acc[key] = {
         active: week[key].active,
