@@ -1,34 +1,31 @@
 
-# Corrigir "Atualizar Foto" - Usar Edge Function Diretamente
 
-## Problema
-A extensao nao reconhece o comando `update_profile_pic` (retorna "Comando desconhecido"). O botao atual envia o comando via `send_bot_command`, que depende da extensao processar -- mas ela nao suporta esse comando.
+# Atualizar Pagina da Extensao para Sincronizar com Organic Pro
 
-## Solucao
-Alterar o botao "Atualizar Foto" para chamar diretamente a edge function `fetch-profile-pic` ao inves de enviar um comando para a extensao. A edge function ja existe e funciona: busca a foto via API publica do Instagram e atualiza o banco.
+## Resumo
+
+A pagina da Extensao (`/extension`) ainda usa o nome antigo "Organic Automator" no subtitulo, enquanto o resto do app (sidebar, login) ja usa "Organic Pro". Alem disso, o aviso sobre URL antiga pode ser simplificado ja que a URL correta (`https://organicbot.lovable.app`) ja esta configurada.
 
 ## Alteracoes
 
-### `src/pages/Queue.tsx`
-- Criar uma funcao `fetchProfilePic` que chama `supabase.functions.invoke("fetch-profile-pic", { body: { ig_account_id, username } })`
-- Alterar o botao "Atualizar Foto" (linha 674) para chamar `fetchProfilePic` ao inves de `sendCmd("update_profile_pic")`
-- Tratar erro/sucesso com toast
-- O realtime ja cuidara de atualizar a foto na UI quando o banco for atualizado
+### 1. `src/pages/Extension.tsx` -- Atualizar branding
 
-### Detalhes Tecnicos
+- **Linha 138**: Trocar `"Organic Automator — integração com o Instagram"` por `"Organic Pro — integração com o Instagram"`
+- O `DASHBOARD_URL` ja esta correto (`https://organicbot.lovable.app`), nao precisa mudar
 
-```text
-Fluxo corrigido:
-[Botao "Atualizar Foto"]
-     |
-     v
-supabase.functions.invoke("fetch-profile-pic", { ig_account_id, username })
-     |
-     v
-Edge Function busca foto via API Instagram --> UPDATE ig_accounts
-     |
-     v
-Realtime subscription atualiza UI automaticamente
-```
+### 2. `src/pages/Settings.tsx` -- Verificar consistencia
 
-A funcao `fetchProfilePic` usara o `accountId` e `selectedAccount.ig_username` ja disponiveis no componente. O loading state pode reutilizar `loadingCmd` com valor `"update_profile_pic"` para manter consistencia visual.
+- As referencias a `dashboard_url: "https://organicbot.lovable.app"` nas linhas 958 e 1176 ja estao corretas
+- O campo `dont_unfollow_non_organicbot` e um nome de campo no banco de dados e nao deve ser renomeado (quebraria a extensao)
+
+## O que NAO precisa mudar
+
+- **`DASHBOARD_URL`** -- ja aponta para `https://organicbot.lovable.app` (URL publicada correta)
+- **`ZIP_URL`** -- continua apontando para o repositorio GitHub correto
+- **Campos do banco** (`dont_unfollow_non_organicbot`) -- sao nomes tecnicos que a extensao Chrome le diretamente; renomear quebraria a sincronizacao
+- **Sidebar e Auth** -- ja usam "Organic Pro"
+
+## Detalhes Tecnicos
+
+A unica alteracao necessaria e trocar o texto "Organic Automator" por "Organic Pro" no subtitulo do header da pagina Extension. E uma mudanca de uma linha.
+
