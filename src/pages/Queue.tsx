@@ -516,11 +516,16 @@ export default function QueuePage() {
         source: "manual" as const,
         details: jsonItems[username] ?? {},
       }));
-      const { error } = await supabase.from("target_queue").insert(rows as never[]);
+      const { error, count } = await supabase.from("target_queue").upsert(rows as never[], {
+        onConflict: "ig_account_id,username",
+        ignoreDuplicates: true,
+        count: "exact",
+      });
       if (error) {
         toast({ title: "Erro ao importar", description: error.message, variant: "destructive" });
       } else {
-        toast({ title: `${usernames.length} target(s) adicionados`, description: "Fila atualizada." });
+        const added = count ?? usernames.length;
+        toast({ title: `${added} target(s) adicionados`, description: "Duplicatas ignoradas. Fila atualizada." });
         await sendCmd("sync_queue", {});
         setImportText("");
         importJsonItemsRef.current = {};
