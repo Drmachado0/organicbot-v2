@@ -17,20 +17,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -62,6 +50,11 @@ import {
   FileText,
   Pencil,
   FolderOpen,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Activity,
+  SendHorizonal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
@@ -85,10 +78,10 @@ interface IgAccount {
 interface SavedList {
   id: string;
   name: string;
-  data: any[];
+  data: string[];
   username_count: number;
   created_at: string;
-  updated_at: string;
+  updated_at: string | null;
 }
 
 interface TargetRow {
@@ -102,6 +95,16 @@ interface TargetRow {
   details: Record<string, unknown> | null;
   campaign_id: string | null;
   campaign_name?: string | null;
+}
+
+interface BotCommand {
+  id: string;
+  command: string;
+  status: string;
+  created_at: string | null;
+  executed_at: string | null;
+  result: Record<string, unknown> | null;
+  params: Record<string, unknown> | null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -132,6 +135,28 @@ const STATUS_COLORS: Record<string, string> = {
   skipped: "bg-muted text-muted-foreground border-border",
 };
 
+const CMD_STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+  pending: { label: "Aguardando", color: "text-yellow-400", icon: <Clock className="w-3 h-3" /> },
+  executed: { label: "Executado", color: "text-green-400", icon: <CheckCircle2 className="w-3 h-3" /> },
+  failed: { label: "Falhou", color: "text-red-400", icon: <AlertCircle className="w-3 h-3" /> },
+};
+
+/** Returns "online" | "away" | "offline" based on last_heartbeat */
+function getExtensionStatus(lastHeartbeat: string | null): "online" | "away" | "offline" {
+  if (!lastHeartbeat) return "offline";
+  const diff = Date.now() - new Date(lastHeartbeat).getTime();
+  if (diff < 6 * 60 * 1000) return "online";
+  if (diff < 45 * 60 * 1000) return "away";
+  return "offline";
+}
+
+/** Returns true if a bot_command is stale (pending for more than 2 min) */
+function isCommandStale(cmd: BotCommand): boolean {
+  if (cmd.status !== "pending") return false;
+  if (!cmd.created_at) return false;
+  return Date.now() - new Date(cmd.created_at).getTime() > 2 * 60 * 1000;
+}
+
 function downloadFile(content: string, filename: string, mime: string) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -154,9 +179,13 @@ export default function QueuePage() {
   const [account, setAccount] = useState<IgAccount | null>(null);
 
   // Queue data
-  // pendingCount is now derived from filteredPendingRows
   const [pendingRows, setPendingRows] = useState<TargetRow[]>([]);
   const [allRows, setAllRows] = useState<TargetRow[]>([]);
+  const [loadingQueue, setLoadingQueue] = useState(false);
+
+  // Recent bot commands
+  const [recentCmds, setRecentCmds] = useState<BotCommand[]>([]);
+  const [cmdsPanelOpen, setCmdsPanelOpen] = useState(false);
 
   // UI states
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -166,7 +195,11 @@ export default function QueuePage() {
   const [importText, setImportText] = useState("");
   const [importFilterPrivate, setImportFilterPrivate] = useState(true);
   const [importFilterNoPhoto, setImportFilterNoPhoto] = useState(true);
-  const [importFilterStats, setImportFilterStats] = useState<{ total: number; removedPrivate: number; removedNoPhoto: number } | null>(null);
+  const [importFilterStats, setImportFilterStats] = useState<{
+    total: number;
+    removedPrivate: number;
+    removedNoPhoto: number;
+  } | null>(null);
   const [manualText, setManualText] = useState("");
   const [hashtagInput, setHashtagInput] = useState("");
   const [locationInput, setLocationInput] = useState("");
@@ -201,11 +234,13 @@ export default function QueuePage() {
   const [savingList, setSavingList] = useState(false);
   const [saveListDialogOpen, setSaveListDialogOpen] = useState(false);
   const [saveListName, setSaveListName] = useState("");
-  const [saveListSource, setSaveListSource] = useState<"import" | "direct">("import");
   const [directUploadText, setDirectUploadText] = useState("");
   const [directUploadName, setDirectUploadName] = useState("");
   const [renamingListId, setRenamingListId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  // Debounce ref for realtime loadQueue
+  const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Load accounts ────────────────────────────────────────────────────────
 
@@ -213,7 +248,9 @@ export default function QueuePage() {
     if (!user) return;
     supabase
       .from("ig_accounts")
-      .select("id, ig_username, ig_user_id, profile_pic_url, followers_count, following_count, bot_online, bot_status, last_heartbeat, bot_mode")
+      .select(
+        "id, ig_username, ig_user_id, profile_pic_url, followers_count, following_count, bot_online, bot_status, last_heartbeat, bot_mode",
+      )
       .eq("user_id", user.id)
       .eq("is_active", true)
       .order("created_at")
@@ -231,57 +268,74 @@ export default function QueuePage() {
     setAccount(found);
   }, [accountId, accounts]);
 
-  // ── Load queue counts & rows ─────────────────────────────────────────────
+  // ── Load queue ───────────────────────────────────────────────────────────
 
-  // Campaign name cache
   const [campaignNames, setCampaignNames] = useState<Record<string, string>>({});
 
   const loadQueue = useCallback(async () => {
     if (!accountId) return;
-    const { data } = await supabase
-      .from("target_queue")
-      .select("id, username, source, status, priority, created_at, processed_at, details, campaign_id")
-      .eq("ig_account_id", accountId)
-      .order("priority", { ascending: false })
-      .order("created_at", { ascending: true })
-      .limit(1000);
+    setLoadingQueue(true);
+    try {
+      const { data } = await supabase
+        .from("target_queue")
+        .select("id, username, source, status, priority, created_at, processed_at, details, campaign_id")
+        .eq("ig_account_id", accountId)
+        .order("priority", { ascending: false })
+        .order("created_at", { ascending: true })
+        .limit(1000);
 
-    const rows = (data ?? []) as TargetRow[];
+      const rows = (data ?? []) as TargetRow[];
 
-    // Fetch campaign names for any campaign_ids found
-    const campaignIds = [...new Set(rows.map((r) => r.campaign_id).filter(Boolean))] as string[];
-    const names: Record<string, string> = {};
-    if (campaignIds.length > 0) {
-      const { data: camps } = await supabase
-        .from("targeting_campaigns")
-        .select("id, name")
-        .in("id", campaignIds);
-      if (camps) {
-        for (const c of camps) names[c.id] = c.name;
+      // Fetch campaign names
+      const campaignIds = [...new Set(rows.map((r) => r.campaign_id).filter(Boolean))] as string[];
+      const names: Record<string, string> = {};
+      if (campaignIds.length > 0) {
+        const { data: camps } = await supabase.from("targeting_campaigns").select("id, name").in("id", campaignIds);
+        if (camps) {
+          for (const c of camps) names[c.id] = c.name;
+        }
       }
+      setCampaignNames(names);
+
+      const enriched = rows.map((r) => ({
+        ...r,
+        campaign_name: r.campaign_id ? (names[r.campaign_id] ?? null) : null,
+      }));
+
+      setAllRows(enriched);
+      const pending = enriched.filter((r) => r.status === "pending" || r.status === "injected");
+      setPendingRows(pending);
+    } finally {
+      setLoadingQueue(false);
     }
-    setCampaignNames(names);
-
-    // Attach campaign_name using local `names` (avoids stale state)
-    const enriched = rows.map((r) => ({
-      ...r,
-      campaign_name: r.campaign_id ? names[r.campaign_id] ?? null : null,
-    }));
-
-    setAllRows(enriched);
-    const pending = enriched.filter((r) => r.status === "pending" || r.status === "injected");
-    setPendingRows(pending);
   }, [accountId]);
 
-  // ── Load synced settings from user_settings + ig_accounts ───────────────
+  // ── Load recent bot commands ─────────────────────────────────────────────
+
+  const loadRecentCmds = useCallback(async () => {
+    if (!accountId) return;
+    const { data } = await supabase
+      .from("bot_commands")
+      .select("id, command, status, created_at, executed_at, result, params")
+      .eq("ig_account_id", accountId)
+      .order("created_at", { ascending: false })
+      .limit(8);
+    setRecentCmds((data ?? []) as unknown as BotCommand[]);
+  }, [accountId]);
+
+  // ── Load synced settings ─────────────────────────────────────────────────
+
   const loadSettings = useCallback(async () => {
     if (!user || !accountId) return;
     const [settingsRes, accountRes] = await Promise.all([
       supabase.from("user_settings").select("settings_json").eq("user_id", user.id).maybeSingle(),
-      supabase.from("ig_accounts").select("delay_min, delay_max, max_actions_per_session").eq("id", accountId).maybeSingle(),
+      supabase
+        .from("ig_accounts")
+        .select("delay_min, delay_max, max_actions_per_session")
+        .eq("id", accountId)
+        .maybeSingle(),
     ]);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sj = (settingsRes.data?.settings_json as any) ?? {};
+    const sj = (settingsRes.data?.settings_json as Record<string, unknown>) ?? {};
     const acc = accountRes.data;
     setCfgDelayMin(acc?.delay_min ?? Number(sj.delay_min ?? 25));
     setCfgDelayMax(acc?.delay_max ?? Number(sj.delay_max ?? 45));
@@ -289,46 +343,55 @@ export default function QueuePage() {
     setCfgMaxSession(acc?.max_actions_per_session ?? Number(sj.max_actions_per_session ?? 50));
   }, [user, accountId]);
 
-  useEffect(() => { loadQueue(); loadSettings(); }, [loadQueue, loadSettings]);
+  useEffect(() => {
+    loadQueue();
+    loadSettings();
+    loadRecentCmds();
+  }, [loadQueue, loadSettings, loadRecentCmds]);
 
-  // ── Load saved lists ────────────────────────────────────────────────────
+  // ── Load saved lists ─────────────────────────────────────────────────────
+
   const loadSavedLists = useCallback(async () => {
     if (!user || !accountId) return;
     const { data } = await supabase
-      .from("saved_lists" as any)
+      .from("saved_lists")
       .select("id, name, data, username_count, created_at, updated_at")
       .eq("user_id", user.id)
       .eq("ig_account_id", accountId)
       .order("created_at", { ascending: false });
-    setSavedLists((data as any as SavedList[]) ?? []);
+    setSavedLists((data ?? []) as unknown as SavedList[]);
   }, [user, accountId]);
 
-  useEffect(() => { loadSavedLists(); }, [loadSavedLists]);
+  useEffect(() => {
+    loadSavedLists();
+  }, [loadSavedLists]);
 
-  // ── Save list to DB ─────────────────────────────────────────────────────
+  // ── Save list to DB ──────────────────────────────────────────────────────
+
   const handleSaveList = async (name: string, usernames: string[]) => {
     if (!user || !accountId || !name.trim() || !usernames.length) return;
     setSavingList(true);
     try {
-      const { error } = await supabase.from("saved_lists" as any).insert({
+      const { error } = await supabase.from("saved_lists").insert({
         user_id: user.id,
         ig_account_id: accountId,
         name: name.trim(),
         data: usernames,
         username_count: usernames.length,
-      } as any);
+      });
       if (error) throw error;
       toast({ title: "Lista salva!", description: `"${name}" com ${usernames.length} usernames.` });
       loadSavedLists();
-    } catch (err: any) {
-      toast({ title: "Erro ao salvar lista", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro desconhecido";
+      toast({ title: "Erro ao salvar lista", description: msg, variant: "destructive" });
     } finally {
       setSavingList(false);
     }
   };
 
   const handleDeleteSavedList = async (id: string) => {
-    const { error } = await supabase.from("saved_lists" as any).delete().eq("id", id);
+    const { error } = await supabase.from("saved_lists").delete().eq("id", id);
     if (error) {
       toast({ title: "Erro", description: error.message, variant: "destructive" });
     } else {
@@ -339,7 +402,7 @@ export default function QueuePage() {
 
   const handleRenameSavedList = async (id: string, newName: string) => {
     if (!newName.trim()) return;
-    const { error } = await supabase.from("saved_lists" as any).update({ name: newName.trim() } as any).eq("id", id);
+    const { error } = await supabase.from("saved_lists").update({ name: newName.trim() }).eq("id", id);
     if (error) {
       toast({ title: "Erro", description: error.message, variant: "destructive" });
     } else {
@@ -351,7 +414,9 @@ export default function QueuePage() {
 
   const handleReimportSavedList = async (list: SavedList) => {
     if (!accountId) return;
-    const usernames = (list.data as any[]).map((item: any) => typeof item === "string" ? item : item?.username).filter(Boolean);
+    const usernames = list.data
+      .map((item) => (typeof item === "string" ? item : ((item as { username?: string })?.username ?? "")))
+      .filter(Boolean);
     if (!usernames.length) return;
     const { data, error } = await supabase.rpc("add_targets_batch", {
       p_ig_account_id: accountId,
@@ -362,6 +427,7 @@ export default function QueuePage() {
       toast({ title: "Erro ao importar", description: error.message, variant: "destructive" });
     } else {
       toast({ title: `${data} target(s) adicionados da lista "${list.name}"` });
+      await sendCmd("sync_queue", {});
       loadQueue();
     }
   };
@@ -371,6 +437,7 @@ export default function QueuePage() {
   };
 
   // ── Campaign progress stats ──────────────────────────────────────────────
+
   const campaignProgress = useMemo(() => {
     const map: Record<string, { name: string; done: number; total: number }> = {};
     for (const row of allRows) {
@@ -388,7 +455,8 @@ export default function QueuePage() {
     return Object.entries(map).map(([id, v]) => ({ id, ...v }));
   }, [allRows, campaignNames]);
 
-  // ── Apply account type filters to pending rows ───────────────────────────
+  // ── Apply account type filters ───────────────────────────────────────────
+
   const filteredPendingRows = useMemo(() => {
     let filtered = [...pendingRows];
     if (removeDuplicates) {
@@ -400,24 +468,23 @@ export default function QueuePage() {
         return true;
       });
     }
-    if (removePrivate) filtered = filtered.filter((r) => !(r.details as any)?.is_private);
-    if (removePublic) filtered = filtered.filter((r) => (r.details as any)?.is_private !== false);
-    if (removeVerified) filtered = filtered.filter((r) => !(r.details as any)?.is_verified);
-    if (removeUnverified) filtered = filtered.filter((r) => (r.details as any)?.is_verified !== false);
-    if (removeNoPhoto) filtered = filtered.filter((r) => {
-      const url = (r.details as any)?.profile_pic_url ?? "";
-      return url && !url.includes("default");
-    });
+    if (removePrivate) filtered = filtered.filter((r) => !(r.details as Record<string, unknown>)?.is_private);
+    if (removePublic) filtered = filtered.filter((r) => (r.details as Record<string, unknown>)?.is_private !== false);
+    if (removeVerified) filtered = filtered.filter((r) => !(r.details as Record<string, unknown>)?.is_verified);
+    if (removeUnverified)
+      filtered = filtered.filter((r) => (r.details as Record<string, unknown>)?.is_verified !== false);
+    if (removeNoPhoto)
+      filtered = filtered.filter((r) => {
+        const url = ((r.details as Record<string, unknown>)?.profile_pic_url as string) ?? "";
+        return url && !url.includes("default");
+      });
     return filtered;
   }, [pendingRows, removeDuplicates, removePrivate, removePublic, removeVerified, removeUnverified, removeNoPhoto]);
 
   const pendingCount = filteredPendingRows.length;
 
-  // IDs to remove when applying filters permanently
   const idsToRemove = useMemo(() => {
-    return pendingRows
-      .filter((r) => !filteredPendingRows.some((f) => f.id === r.id))
-      .map((r) => r.id);
+    return pendingRows.filter((r) => !filteredPendingRows.some((f) => f.id === r.id)).map((r) => r.id);
   }, [pendingRows, filteredPendingRows]);
 
   const [applyingFilters, setApplyingFilters] = useState(false);
@@ -426,13 +493,9 @@ export default function QueuePage() {
     if (!idsToRemove.length || !accountId) return;
     setApplyingFilters(true);
     try {
-      // Batch in chunks of 200 to avoid query limits
       for (let i = 0; i < idsToRemove.length; i += 200) {
         const chunk = idsToRemove.slice(i, i + 200);
-        const { error } = await supabase
-          .from("target_queue")
-          .update({ status: "skipped" })
-          .in("id", chunk);
+        const { error } = await supabase.from("target_queue").update({ status: "skipped" }).in("id", chunk);
         if (error) {
           toast({ title: "Erro", description: error.message, variant: "destructive" });
           return;
@@ -445,36 +508,73 @@ export default function QueuePage() {
     }
   };
 
-  // ── Realtime subscription ────────────────────────────────────────────────
+  // ── Realtime subscription (debounced) ────────────────────────────────────
 
   useEffect(() => {
     if (!accountId) return;
-    const channel = supabase
+
+    const scheduleLoad = () => {
+      if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
+      realtimeDebounceRef.current = setTimeout(() => loadQueue(), 800);
+    };
+
+    const queueChannel = supabase
       .channel(`queue-page-${accountId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${accountId}` }, () => loadQueue())
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${accountId}` }, () => loadQueue())
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${accountId}` }, () => loadQueue())
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${accountId}` },
+        scheduleLoad,
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${accountId}` },
+        scheduleLoad,
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "target_queue", filter: `ig_account_id=eq.${accountId}` },
+        scheduleLoad,
+      )
       .subscribe();
 
-    // Also subscribe to account changes
     const accChannel = supabase
       .channel(`queue-account-${accountId}`)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "ig_accounts", filter: `id=eq.${accountId}` }, (payload) => {
-        setAccount((prev) => prev ? { ...prev, ...(payload.new as IgAccount) } : prev);
-        setAccounts((prev) => prev.map((a) => a.id === accountId ? { ...a, ...(payload.new as IgAccount) } : a));
-      })
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "ig_accounts", filter: `id=eq.${accountId}` },
+        (payload) => {
+          setAccount((prev) => (prev ? { ...prev, ...(payload.new as IgAccount) } : prev));
+          setAccounts((prev) => prev.map((a) => (a.id === accountId ? { ...a, ...(payload.new as IgAccount) } : a)));
+        },
+      )
+      .subscribe();
+
+    // Realtime for bot_commands
+    const cmdsChannel = supabase
+      .channel(`queue-cmds-${accountId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "bot_commands", filter: `ig_account_id=eq.${accountId}` },
+        () => loadRecentCmds(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "bot_commands", filter: `ig_account_id=eq.${accountId}` },
+        () => loadRecentCmds(),
+      )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
+      supabase.removeChannel(queueChannel);
       supabase.removeChannel(accChannel);
+      supabase.removeChannel(cmdsChannel);
     };
-  }, [accountId, loadQueue]);
+  }, [accountId, loadQueue, loadRecentCmds]);
 
   // ── Bot commands ─────────────────────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sendCmd = async (command: string, params: any = {}) => {
+  const sendCmd = async (command: string, params: Record<string, unknown> = {}) => {
     if (!accountId) return;
     setLoadingCmd(command);
     try {
@@ -484,15 +584,14 @@ export default function QueuePage() {
         p_params: params,
       });
       toast({ title: `Comando "${command}" enviado`, description: "A extensão processará em breve." });
+      // Refresh commands panel after a short delay
+      setTimeout(() => loadRecentCmds(), 500);
     } catch {
       toast({ title: "Erro", description: "Falha ao enviar comando.", variant: "destructive" });
     } finally {
       setLoadingCmd(null);
     }
   };
-
-
-
 
   const handleUpdateProfilePic = async () => {
     if (!accountId || !account?.ig_username) return;
@@ -505,7 +604,6 @@ export default function QueuePage() {
       if (data?.error) throw new Error(data.error);
       toast({ title: "Foto atualizada!", description: "A foto de perfil foi atualizada com sucesso." });
     } catch {
-      // Auto-fetch failed — open manual input dialog
       setManualPicOpen(true);
     } finally {
       setLoadingCmd(null);
@@ -532,7 +630,6 @@ export default function QueuePage() {
     }
   };
 
-
   const exportJSON = () => {
     downloadFile(JSON.stringify(filteredPendingRows, null, 2), "queue.json", "application/json");
   };
@@ -547,56 +644,60 @@ export default function QueuePage() {
 
   // ── Import ───────────────────────────────────────────────────────────────
 
-  // Store parsed JSON items with details for import
   const importJsonItemsRef = useRef<Record<string, Record<string, unknown>>>({});
 
-  // Smart parser: tries JSON first (works for .txt/.csv/.json), falls back to text
   const parseFileContent = (text: string): string => {
     try {
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(text) as unknown;
       const allUsernames: string[] = [];
       let countPrivate = 0;
       let countNoPhoto = 0;
       if (Array.isArray(parsed)) {
-        parsed.forEach((item: any) => {
-          const uname = typeof item === "string" ? item : item?.username;
+        (parsed as unknown[]).forEach((item) => {
+          const uname = typeof item === "string" ? item : (item as { username?: string })?.username;
           if (uname) {
             allUsernames.push(uname);
-            if (typeof item === "object") {
-              const { username, ...rest } = item;
+            if (typeof item === "object" && item !== null) {
+              const record = item as Record<string, unknown>;
+              const { username: _u, ...rest } = record;
               importJsonItemsRef.current[uname] = rest;
-              if (item.is_private === true || item.is_private === "true") countPrivate++;
-              const picUrl = item.profile_pic_url ?? "";
+              if (record.is_private === true || record.is_private === "true") countPrivate++;
+              const picUrl = (record.profile_pic_url as string) ?? "";
               if (!picUrl || picUrl.includes("default") || picUrl === "") countNoPhoto++;
             }
           }
         });
       } else if (typeof parsed === "object" && parsed !== null) {
-        allUsernames.push(...Object.keys(parsed));
+        allUsernames.push(...Object.keys(parsed as object));
       }
       if (allUsernames.length > 0) {
-        setImportFilterStats({ total: allUsernames.length, removedPrivate: countPrivate, removedNoPhoto: countNoPhoto });
+        setImportFilterStats({
+          total: allUsernames.length,
+          removedPrivate: countPrivate,
+          removedNoPhoto: countNoPhoto,
+        });
         return allUsernames.join("\n");
       }
     } catch {
-      // Not JSON — fall through to text parsing
       setImportFilterStats(null);
     }
     return text;
   };
 
-  // Compute filtered import count
   const importUsernames = useMemo(() => {
-    const all = importText.split("\n").map((u) => u.trim().replace(/^@/, "")).filter(Boolean);
+    const all = importText
+      .split("\n")
+      .map((u) => u.trim().replace(/^@/, ""))
+      .filter(Boolean);
     const jsonItems = importJsonItemsRef.current;
     const hasDetails = Object.keys(jsonItems).length > 0;
     if (!hasDetails) return all;
     return all.filter((uname) => {
-      const details = jsonItems[uname] as any;
+      const details = jsonItems[uname] as Record<string, unknown> | undefined;
       if (!details) return true;
       if (importFilterPrivate && (details.is_private === true || details.is_private === "true")) return false;
       if (importFilterNoPhoto) {
-        const pic = details.profile_pic_url ?? "";
+        const pic = (details.profile_pic_url as string) ?? "";
         if (!pic || pic.includes("default")) return false;
       }
       return true;
@@ -607,21 +708,17 @@ export default function QueuePage() {
     const usernames = importUsernames;
     if (!usernames.length || !accountId) return;
 
-    // Check if we have JSON details to attach
     const jsonItems = importJsonItemsRef.current;
     const hasDetails = Object.keys(jsonItems).length > 0;
 
     if (hasDetails) {
-      // Insert directly with details
       const rows = usernames.map((username) => ({
         ig_account_id: accountId,
         username,
         source: "manual" as const,
         details: jsonItems[username] ?? {},
       }));
-      const { error } = await supabase.from("target_queue").insert(rows as never[], {
-        count: "exact",
-      });
+      const { error } = await supabase.from("target_queue").insert(rows);
       if (error) {
         toast({ title: "Erro ao importar", description: error.message, variant: "destructive" });
       } else {
@@ -653,7 +750,10 @@ export default function QueuePage() {
   // ── Manual entry ─────────────────────────────────────────────────────────
 
   const handleManual = async () => {
-    const usernames = manualText.split("\n").map((u) => u.trim().replace(/^@/, "")).filter(Boolean);
+    const usernames = manualText
+      .split("\n")
+      .map((u) => u.trim().replace(/^@/, ""))
+      .filter(Boolean);
     if (!usernames.length || !accountId) return;
     const { data, error } = await supabase.rpc("add_targets_batch", {
       p_ig_account_id: accountId,
@@ -664,6 +764,7 @@ export default function QueuePage() {
       toast({ title: "Erro", description: error.message, variant: "destructive" });
     } else {
       toast({ title: `${data} target(s) adicionados` });
+      await sendCmd("sync_queue", {});
       setManualText("");
       setManualOpen(false);
       loadQueue();
@@ -682,14 +783,17 @@ export default function QueuePage() {
       toast({ title: "Erro", description: error.message, variant: "destructive" });
     } else {
       toast({ title: "Fila limpa", description: "Todos os targets pendentes foram removidos." });
+      await sendCmd("sync_queue", {});
       loadQueue();
     }
   };
 
-  // ── Skip (soft delete) ───────────────────────────────────────────────────
+  // ── Skip target ──────────────────────────────────────────────────────────
 
   const skipTarget = async (id: string) => {
     await supabase.from("target_queue").update({ status: "skipped" }).eq("id", id);
+    // Notify extension so it removes this from its local queue
+    await sendCmd("sync_queue", {});
     loadQueue();
   };
 
@@ -704,17 +808,38 @@ export default function QueuePage() {
   const pagedRows = filteredRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE);
 
-  // ── Heartbeat display ────────────────────────────────────────────────────
+  // ── Extension / heartbeat display ────────────────────────────────────────
 
   const heartbeatStr = account?.last_heartbeat
     ? formatDistanceToNow(new Date(account.last_heartbeat), { addSuffix: true, locale: ptBR })
     : "nunca";
 
-  const isOnline = (() => {
-    if (!account?.bot_online || !account?.last_heartbeat) return false;
-    const diff = Date.now() - new Date(account.last_heartbeat).getTime();
-    return diff < 6 * 60 * 1000;
-  })();
+  const extStatus = getExtensionStatus(account?.last_heartbeat ?? null);
+  const isOnline = extStatus === "online";
+
+  const extStatusConfig = {
+    online: {
+      label: "Online",
+      color: "text-green-400",
+      dot: "bg-green-400",
+      bg: "bg-green-500/10 border-green-500/30",
+    },
+    away: {
+      label: "Ausente",
+      color: "text-yellow-400",
+      dot: "bg-yellow-400",
+      bg: "bg-yellow-500/10 border-yellow-500/30",
+    },
+    offline: {
+      label: "Offline",
+      color: "text-muted-foreground",
+      dot: "bg-muted-foreground",
+      bg: "bg-muted/20 border-border",
+    },
+  };
+
+  // Detect stale (stuck) commands
+  const hasStaleCommand = recentCmds.some(isCommandStale);
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -724,7 +849,10 @@ export default function QueuePage() {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "hsl(var(--primary)/0.15)", border: "1px solid hsl(var(--primary)/0.4)" }}>
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ background: "hsl(var(--primary)/0.15)", border: "1px solid hsl(var(--primary)/0.4)" }}
+            >
               <ListOrdered className="h-4 w-4 text-primary" />
             </div>
             <div>
@@ -733,40 +861,80 @@ export default function QueuePage() {
             </div>
           </div>
 
-          {/* Account selector */}
-          {accounts.length > 1 && (
-            <Select value={accountId} onValueChange={setAccountId}>
-              <SelectTrigger className="w-48 h-8 text-xs border-border bg-secondary">
-                <SelectValue placeholder="Selecionar conta" />
-              </SelectTrigger>
-              <SelectContent>
-                {accounts.map((a) => (
-                  <SelectItem key={a.id} value={a.id} className="text-xs">
-                    @{a.ig_username}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Extension status badge */}
+            {account && (
+              <div
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium",
+                  extStatusConfig[extStatus].bg,
+                  extStatusConfig[extStatus].color,
+                )}
+              >
+                <span
+                  className={cn(
+                    "w-1.5 h-1.5 rounded-full flex-shrink-0",
+                    extStatusConfig[extStatus].dot,
+                    extStatus === "online" && "animate-pulse",
+                  )}
+                />
+                <span className="hidden sm:inline">Extensão</span> {extStatusConfig[extStatus].label}
+              </div>
+            )}
+
+            {/* Account selector */}
+            {accounts.length > 1 && (
+              <Select value={accountId} onValueChange={setAccountId}>
+                <SelectTrigger className="w-48 h-8 text-xs border-border bg-secondary">
+                  <SelectValue placeholder="Selecionar conta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id} className="text-xs">
+                      @{a.ig_username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
         </div>
+
+        {/* Stale command alert */}
+        {hasStaleCommand && (
+          <div className="mx-6 mt-3 flex items-start gap-2.5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2.5">
+            <AlertCircle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-yellow-400">Comando pendente há mais de 2 minutos</p>
+              <p className="text-[11px] text-yellow-400/70 mt-0.5">
+                A extensão pode estar offline ou fechada. Verifique se o Chrome está aberto com a extensão ativa.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <Tabs defaultValue="collector" className="flex flex-col flex-1 min-h-0">
           <TabsList className="mx-6 mt-4 mb-0 w-fit rounded-lg bg-secondary border border-border">
-            <TabsTrigger value="collector" className="text-xs px-4">Coletor</TabsTrigger>
-            <TabsTrigger value="reader" className="text-xs px-4">Leitor de Lista</TabsTrigger>
+            <TabsTrigger value="collector" className="text-xs px-4">
+              Coletor
+            </TabsTrigger>
+            <TabsTrigger value="reader" className="text-xs px-4">
+              Leitor de Lista
+            </TabsTrigger>
             <TabsTrigger value="saved" className="text-xs px-4">
               <FolderOpen className="w-3 h-3 mr-1" />
               Listas Salvas
               {savedLists.length > 0 && (
-                <Badge className="ml-1.5 text-[9px] px-1 py-0 h-4 bg-primary/20 text-primary border-primary/30">{savedLists.length}</Badge>
+                <Badge className="ml-1.5 text-[9px] px-1 py-0 h-4 bg-primary/20 text-primary border-primary/30">
+                  {savedLists.length}
+                </Badge>
               )}
             </TabsTrigger>
           </TabsList>
 
           {/* ── TAB 1: COLETOR ── */}
           <TabsContent value="collector" className="flex-1 overflow-y-auto px-6 py-4 space-y-3 mt-0">
-
             {/* PERFIL ATUAL */}
             <div className="rounded-xl border border-border bg-card p-4">
               <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-3">Perfil Atual</p>
@@ -782,7 +950,11 @@ export default function QueuePage() {
                       }}
                     >
                       {account.profile_pic_url ? (
-                        <img src={account.profile_pic_url} alt={account.ig_username} className="w-full h-full object-cover" />
+                        <img
+                          src={account.profile_pic_url}
+                          alt={account.ig_username}
+                          className="w-full h-full object-cover"
+                        />
                       ) : (
                         <span className="text-foreground">@</span>
                       )}
@@ -790,7 +962,11 @@ export default function QueuePage() {
                     <span
                       className={cn(
                         "absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-card",
-                        isOnline ? "bg-primary animate-pulse" : "bg-muted-foreground"
+                        isOnline
+                          ? "bg-primary animate-pulse"
+                          : extStatus === "away"
+                            ? "bg-yellow-400"
+                            : "bg-muted-foreground",
                       )}
                     />
                   </div>
@@ -799,8 +975,18 @@ export default function QueuePage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-foreground">@{account.ig_username}</p>
                     <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                      <span><span className="font-semibold text-foreground">{(account.followers_count ?? 0).toLocaleString()}</span> seguidores</span>
-                      <span><span className="font-semibold text-foreground">{(account.following_count ?? 0).toLocaleString()}</span> seguindo</span>
+                      <span>
+                        <span className="font-semibold text-foreground">
+                          {(account.followers_count ?? 0).toLocaleString()}
+                        </span>{" "}
+                        seguidores
+                      </span>
+                      <span>
+                        <span className="font-semibold text-foreground">
+                          {(account.following_count ?? 0).toLocaleString()}
+                        </span>{" "}
+                        seguindo
+                      </span>
                     </div>
                     <div className="flex items-center gap-2 mt-2">
                       {account.ig_user_id ? (
@@ -813,8 +999,19 @@ export default function QueuePage() {
                         </Badge>
                       )}
                       <span className="text-[10px] text-muted-foreground">
-                        {isOnline ? <span className="text-primary flex items-center gap-1"><Wifi className="w-3 h-3" /> Online · {heartbeatStr}</span>
-                          : <span className="flex items-center gap-1"><WifiOff className="w-3 h-3" /> Offline · {heartbeatStr}</span>}
+                        {isOnline ? (
+                          <span className="text-primary flex items-center gap-1">
+                            <Wifi className="w-3 h-3" /> Online · {heartbeatStr}
+                          </span>
+                        ) : extStatus === "away" ? (
+                          <span className="flex items-center gap-1 text-yellow-400">
+                            <Wifi className="w-3 h-3" /> Ausente · {heartbeatStr}
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1">
+                            <WifiOff className="w-3 h-3" /> Offline · {heartbeatStr}
+                          </span>
+                        )}
                       </span>
                     </div>
                   </div>
@@ -825,15 +1022,33 @@ export default function QueuePage() {
 
               {/* Detection buttons */}
               <div className="flex gap-2 mt-3">
-                <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => sendCmd("sync_settings")} disabled={loadingCmd === "sync_settings"}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7 flex-1"
+                  onClick={() => sendCmd("sync_settings")}
+                  disabled={loadingCmd === "sync_settings"}
+                >
                   <RefreshCw className={cn("w-3 h-3", loadingCmd === "sync_settings" && "animate-spin")} />
                   Re-detectar
                 </Button>
-                <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={handleUpdateProfilePic} disabled={loadingCmd === "update_profile_pic"}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7 flex-1"
+                  onClick={handleUpdateProfilePic}
+                  disabled={loadingCmd === "update_profile_pic"}
+                >
                   <RefreshCw className={cn("w-3 h-3", loadingCmd === "update_profile_pic" && "animate-spin")} />
-                  Atualizar Foto
+                  Foto
                 </Button>
-                <Button size="sm" variant="outline" className="text-xs h-7 flex-1" onClick={() => sendCmd("collect_via_api")} disabled={loadingCmd === "collect_via_api"}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7 flex-1"
+                  onClick={() => sendCmd("collect_via_api")}
+                  disabled={loadingCmd === "collect_via_api"}
+                >
                   <Zap className="w-3 h-3" />
                   API
                 </Button>
@@ -873,7 +1088,9 @@ export default function QueuePage() {
                   />
                   <Button
                     className="text-xs h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white flex-shrink-0"
-                    onClick={() => { if (hashtagInput) sendCmd("collect_hashtag", { hashtag: hashtagInput }); }}
+                    onClick={() => {
+                      if (hashtagInput) sendCmd("collect_hashtag", { hashtag: hashtagInput });
+                    }}
                     disabled={!!loadingCmd || !hashtagInput}
                   >
                     <Hash className="w-3.5 h-3.5" />
@@ -888,7 +1105,9 @@ export default function QueuePage() {
                   />
                   <Button
                     className="text-xs h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white flex-shrink-0"
-                    onClick={() => { if (locationInput) sendCmd("collect_location", { location: locationInput }); }}
+                    onClick={() => {
+                      if (locationInput) sendCmd("collect_location", { location: locationInput });
+                    }}
                     disabled={!!loadingCmd || !locationInput}
                   >
                     <MapPin className="w-3.5 h-3.5" />
@@ -899,30 +1118,65 @@ export default function QueuePage() {
 
             {/* FILA COLETADA */}
             <div className="rounded-xl border border-border bg-card p-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-3">Fila Coletada</p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Fila Coletada</p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs h-6 px-2"
+                  onClick={loadQueue}
+                  disabled={loadingQueue}
+                >
+                  <RefreshCw className={cn("w-3 h-3", loadingQueue && "animate-spin")} />
+                </Button>
+              </div>
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <p className="text-3xl font-bold text-foreground">{pendingCount}</p>
                   <p className="text-xs text-muted-foreground">contas na fila (pendentes)</p>
                 </div>
-                <Button size="sm" variant="outline" className="text-xs h-7" onClick={loadQueue}>
-                  <RefreshCw className="w-3 h-3" />
+                {/* Inject queue button */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-8 border-primary/40 text-primary hover:bg-primary/10"
+                  onClick={() => sendCmd("inject_queue", {})}
+                  disabled={!!loadingCmd || pendingCount === 0}
+                  title="Força a extensão a buscar os targets da fila agora"
+                >
+                  <SendHorizonal className={cn("w-3 h-3", loadingCmd === "inject_queue" && "animate-pulse")} />
+                  Injetar Fila
                 </Button>
               </div>
 
               {/* Export */}
               <p className="text-[10px] text-muted-foreground mb-2">Exportar fila pendente:</p>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={exportJSON} disabled={pendingCount === 0}
-                  className="text-xs h-7 flex-1 border-green-500/40 text-green-400 hover:bg-green-500/10">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={exportJSON}
+                  disabled={pendingCount === 0}
+                  className="text-xs h-7 flex-1 border-green-500/40 text-green-400 hover:bg-green-500/10"
+                >
                   <Download className="w-3 h-3" /> JSON
                 </Button>
-                <Button size="sm" variant="outline" onClick={exportCSV} disabled={pendingCount === 0}
-                  className="text-xs h-7 flex-1 border-green-500/40 text-green-400 hover:bg-green-500/10">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={exportCSV}
+                  disabled={pendingCount === 0}
+                  className="text-xs h-7 flex-1 border-green-500/40 text-green-400 hover:bg-green-500/10"
+                >
                   <Download className="w-3 h-3" /> CSV
                 </Button>
-                <Button size="sm" variant="outline" onClick={exportTXT} disabled={pendingCount === 0}
-                  className="text-xs h-7 flex-1 border-green-500/40 text-green-400 hover:bg-green-500/10">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={exportTXT}
+                  disabled={pendingCount === 0}
+                  className="text-xs h-7 flex-1 border-green-500/40 text-green-400 hover:bg-green-500/10"
+                >
                   <Download className="w-3 h-3" /> TXT
                 </Button>
               </div>
@@ -958,7 +1212,9 @@ export default function QueuePage() {
                           if (!accountId) return;
                           setLoadingCmd("remove_duplicates");
                           try {
-                            const { data, error } = await supabase.rpc("remove_duplicate_targets", { p_ig_account_id: accountId });
+                            const { data, error } = await supabase.rpc("remove_duplicate_targets", {
+                              p_ig_account_id: accountId,
+                            });
                             if (error) {
                               toast({ title: "Erro", description: error.message, variant: "destructive" });
                             } else {
@@ -977,7 +1233,12 @@ export default function QueuePage() {
                 </AlertDialog>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button size="sm" variant="destructive" className="text-xs h-8 flex-1" disabled={pendingCount === 0}>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="text-xs h-8 flex-1"
+                      disabled={pendingCount === 0}
+                    >
                       <Trash2 className="w-3 h-3" /> Limpar Fila
                     </Button>
                   </AlertDialogTrigger>
@@ -985,7 +1246,8 @@ export default function QueuePage() {
                     <AlertDialogHeader>
                       <AlertDialogTitle>Limpar fila pendente?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        {pendingCount} target(s) pendente(s) serão removidos permanentemente. Esta ação não pode ser desfeita.
+                        {pendingCount} target(s) pendente(s) serão removidos permanentemente. Esta ação não pode ser
+                        desfeita.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -1004,7 +1266,9 @@ export default function QueuePage() {
               <div className="rounded-xl border border-border bg-card p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <Target className="w-3.5 h-3.5 text-primary" />
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Progresso por Campanha</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    Progresso por Campanha
+                  </p>
                 </div>
                 <div className="space-y-3">
                   {campaignProgress.map((cp) => {
@@ -1022,9 +1286,10 @@ export default function QueuePage() {
                             className="h-full rounded-full transition-all duration-500"
                             style={{
                               width: `${pct}%`,
-                              background: pct === 100
-                                ? "hsl(var(--primary))"
-                                : "linear-gradient(90deg, hsl(var(--primary) / 0.7), hsl(var(--primary)))",
+                              background:
+                                pct === 100
+                                  ? "hsl(var(--primary))"
+                                  : "linear-gradient(90deg, hsl(var(--primary) / 0.7), hsl(var(--primary)))",
                             }}
                           />
                         </div>
@@ -1035,26 +1300,138 @@ export default function QueuePage() {
               </div>
             )}
 
+            {/* COMANDOS RECENTES (colapsível) */}
+            <Collapsible open={cmdsPanelOpen} onOpenChange={setCmdsPanelOpen}>
+              <div className="rounded-xl border border-border bg-card">
+                <CollapsibleTrigger className="w-full flex items-center justify-between px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-3.5 h-3.5 text-muted-foreground" />
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                      Comandos Recentes
+                    </p>
+                    {recentCmds.some((c) => c.status === "pending") && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        loadRecentCmds();
+                      }}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                      title="Atualizar"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                    </button>
+                    {cmdsPanelOpen ? (
+                      <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    )}
+                  </div>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="px-4 pb-3">
+                    {recentCmds.length === 0 ? (
+                      <p className="text-xs text-muted-foreground py-2">Nenhum comando enviado ainda.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {recentCmds.map((cmd) => {
+                          const cfg = CMD_STATUS_CONFIG[cmd.status] ?? CMD_STATUS_CONFIG.pending;
+                          const stale = isCommandStale(cmd);
+                          return (
+                            <div
+                              key={cmd.id}
+                              className={cn(
+                                "flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs",
+                                stale ? "bg-yellow-500/10 border border-yellow-500/25" : "bg-secondary/60",
+                              )}
+                            >
+                              <span className={cn("flex-shrink-0", cfg.color)}>{cfg.icon}</span>
+                              <span className="font-mono text-[11px] text-foreground font-medium truncate flex-1">
+                                {cmd.command}
+                              </span>
+                              <span className={cn("text-[10px] flex-shrink-0", cfg.color)}>{cfg.label}</span>
+                              <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                                {cmd.created_at
+                                  ? formatDistanceToNow(new Date(cmd.created_at), { addSuffix: true, locale: ptBR })
+                                  : "—"}
+                              </span>
+                              {stale && (
+                                <span className="text-[9px] text-yellow-400 flex-shrink-0 font-medium">TRAVADO</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-muted-foreground mt-2">
+                      Comandos são executados pela extensão em até 45s quando online.
+                    </p>
+                  </div>
+                </CollapsibleContent>
+              </div>
+            </Collapsible>
+
             {/* FILTROS (colapsível) */}
             <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
               <div className="rounded-xl border border-border bg-card">
                 <CollapsibleTrigger className="w-full flex items-center justify-between px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Filtros Ativos</p>
-                  {filtersOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    Filtros Ativos
+                  </p>
+                  {filtersOpen ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="px-4 pb-4 space-y-3">
                     {/* TIPO DE CONTA */}
                     <div>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Tipo de Conta</p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                        Tipo de Conta
+                      </p>
                       <div className="grid grid-cols-2 gap-2">
                         {[
-                          { id: "removePrivate", label: "Remover privadas", checked: removePrivate, set: setRemovePrivate },
-                          { id: "removePublic", label: "Remover públicas", checked: removePublic, set: setRemovePublic },
-                          { id: "removeVerified", label: "Remover verificadas", checked: removeVerified, set: setRemoveVerified },
-                          { id: "removeUnverified", label: "Remover não-verificadas", checked: removeUnverified, set: setRemoveUnverified },
-                          { id: "removeNoPhoto", label: "Remover sem foto", checked: removeNoPhoto, set: setRemoveNoPhoto },
-                          { id: "removeDuplicates", label: "Remover duplicadas", checked: removeDuplicates, set: setRemoveDuplicates },
+                          {
+                            id: "removePrivate",
+                            label: "Remover privadas",
+                            checked: removePrivate,
+                            set: setRemovePrivate,
+                          },
+                          {
+                            id: "removePublic",
+                            label: "Remover públicas",
+                            checked: removePublic,
+                            set: setRemovePublic,
+                          },
+                          {
+                            id: "removeVerified",
+                            label: "Remover verificadas",
+                            checked: removeVerified,
+                            set: setRemoveVerified,
+                          },
+                          {
+                            id: "removeUnverified",
+                            label: "Remover não-verificadas",
+                            checked: removeUnverified,
+                            set: setRemoveUnverified,
+                          },
+                          {
+                            id: "removeNoPhoto",
+                            label: "Remover sem foto",
+                            checked: removeNoPhoto,
+                            set: setRemoveNoPhoto,
+                          },
+                          {
+                            id: "removeDuplicates",
+                            label: "Remover duplicadas",
+                            checked: removeDuplicates,
+                            set: setRemoveDuplicates,
+                          },
                         ].map((f) => (
                           <label key={f.id} className="flex items-center gap-2 cursor-pointer group">
                             <Checkbox
@@ -1092,7 +1469,8 @@ export default function QueuePage() {
                           <AlertDialogHeader>
                             <AlertDialogTitle>Aplicar filtros permanentemente?</AlertDialogTitle>
                             <AlertDialogDescription>
-                              {idsToRemove.length} target(s) serão marcados como "skipped" e removidos da fila permanentemente. Esta ação não pode ser desfeita.
+                              {idsToRemove.length} target(s) serão marcados como "skipped" e removidos da fila
+                              permanentemente. Esta ação não pode ser desfeita.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -1114,11 +1492,16 @@ export default function QueuePage() {
                       <p className="text-xs text-muted-foreground mb-1.5">Fonte</p>
                       <div className="flex flex-wrap gap-1.5">
                         {["all", "manual", "followers", "following", "hashtag", "location"].map((s) => (
-                          <button key={s} onClick={() => setFilterSource(s)}
-                            className={cn("text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+                          <button
+                            key={s}
+                            onClick={() => setFilterSource(s)}
+                            className={cn(
+                              "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
                               filterSource === s
                                 ? "bg-primary/20 text-primary border-primary/40"
-                                : "text-muted-foreground border-border hover:border-muted-foreground")}>
+                                : "text-muted-foreground border-border hover:border-muted-foreground",
+                            )}
+                          >
                             {s === "all" ? "Todos" : SOURCE_LABELS[s]}
                           </button>
                         ))}
@@ -1128,11 +1511,16 @@ export default function QueuePage() {
                       <p className="text-xs text-muted-foreground mb-1.5">Status</p>
                       <div className="flex flex-wrap gap-1.5">
                         {["all", "pending", "processing", "done", "skipped"].map((s) => (
-                          <button key={s} onClick={() => setFilterStatus(s)}
-                            className={cn("text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+                          <button
+                            key={s}
+                            onClick={() => setFilterStatus(s)}
+                            className={cn(
+                              "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
                               filterStatus === s
                                 ? "bg-primary/20 text-primary border-primary/40"
-                                : "text-muted-foreground border-border hover:border-muted-foreground")}>
+                                : "text-muted-foreground border-border hover:border-muted-foreground",
+                            )}
+                          >
                             {s === "all" ? "Todos" : s}
                           </button>
                         ))}
@@ -1149,80 +1537,114 @@ export default function QueuePage() {
                 <CollapsibleTrigger className="w-full flex items-center justify-between px-4 py-3">
                   <div className="flex items-center gap-2">
                     <Settings2 className="w-3.5 h-3.5 text-muted-foreground" />
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Configurações</p>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                      Configurações
+                    </p>
                   </div>
-                  {configOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                  {configOpen ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="px-4 pb-4 space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <p className="text-[10px] text-muted-foreground mb-1">Delay mín (s)</p>
-                        <Input type="number" min={5} max={300} value={cfgDelayMin}
+                        <Input
+                          type="number"
+                          min={5}
+                          max={300}
+                          value={cfgDelayMin}
                           onChange={(e) => setCfgDelayMin(Number(e.target.value))}
-                          className="h-8 text-xs text-center border-border bg-secondary" />
+                          className="h-8 text-xs text-center border-border bg-secondary"
+                        />
                       </div>
                       <div>
                         <p className="text-[10px] text-muted-foreground mb-1">Delay máx (s)</p>
-                        <Input type="number" min={5} max={300} value={cfgDelayMax}
+                        <Input
+                          type="number"
+                          min={5}
+                          max={300}
+                          value={cfgDelayMax}
                           onChange={(e) => setCfgDelayMax(Number(e.target.value))}
-                          className="h-8 text-xs text-center border-border bg-secondary" />
+                          className="h-8 text-xs text-center border-border bg-secondary"
+                        />
                       </div>
                       <div>
                         <p className="text-[10px] text-muted-foreground mb-1">Follows/dia</p>
-                        <Input type="number" min={1} max={500} value={cfgFollowDaily}
+                        <Input
+                          type="number"
+                          min={1}
+                          max={500}
+                          value={cfgFollowDaily}
                           onChange={(e) => setCfgFollowDaily(Number(e.target.value))}
-                          className="h-8 text-xs text-center border-border bg-secondary" />
+                          className="h-8 text-xs text-center border-border bg-secondary"
+                        />
                       </div>
                       <div>
                         <p className="text-[10px] text-muted-foreground mb-1">Max ações/sessão</p>
-                        <Input type="number" min={1} max={500} value={cfgMaxSession}
+                        <Input
+                          type="number"
+                          min={1}
+                          max={500}
+                          value={cfgMaxSession}
                           onChange={(e) => setCfgMaxSession(Number(e.target.value))}
-                          className="h-8 text-xs text-center border-border bg-secondary" />
+                          className="h-8 text-xs text-center border-border bg-secondary"
+                        />
                       </div>
                     </div>
-                    <Button size="sm" className="h-8 text-xs w-full" disabled={savingConfig} onClick={async () => {
-                      if (!user || !accountId) return;
-                      setSavingConfig(true);
-                      try {
-                        // 1. Merge into user_settings.settings_json
-                        const { data: existing } = await supabase.from("user_settings").select("settings_json").eq("user_id", user.id).maybeSingle();
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const prevJson: any = existing?.settings_json ?? {};
-                        const merged = {
-                          ...prevJson,
-                          delay_min: cfgDelayMin,
-                          delay_max: cfgDelayMax,
-                          follow_daily_limit: cfgFollowDaily,
-                          max_actions_per_session: cfgMaxSession,
-                        };
-                        await supabase.from("user_settings").upsert(
-                          { user_id: user.id, settings_json: merged as never, updated_at: new Date().toISOString() },
-                          { onConflict: "user_id" }
-                        );
-
-                        // 2. Dual-write to ig_accounts
-                        await supabase.from("ig_accounts").update({
-                          delay_min: cfgDelayMin,
-                          delay_max: cfgDelayMax,
-                          max_actions_per_session: cfgMaxSession,
-                          updated_at: new Date().toISOString(),
-                        }).eq("id", accountId);
-
-                        // 3. Send sync_settings command to extension
-                        await supabase.rpc("send_bot_command", {
-                          p_ig_account_id: accountId,
-                          p_command: "sync_settings",
-                          p_params: {},
-                        });
-
-                        toast({ title: "Configurações salvas", description: "Sincronizado com a extensão." });
-                      } catch {
-                        toast({ title: "Erro ao salvar", variant: "destructive" });
-                      } finally {
-                        setSavingConfig(false);
-                      }
-                    }}>
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs w-full"
+                      disabled={savingConfig}
+                      onClick={async () => {
+                        if (!user || !accountId) return;
+                        setSavingConfig(true);
+                        try {
+                          const { data: existing } = await supabase
+                            .from("user_settings")
+                            .select("settings_json")
+                            .eq("user_id", user.id)
+                            .maybeSingle();
+                          const prevJson = (existing?.settings_json as Record<string, unknown>) ?? {};
+                          const merged = {
+                            ...prevJson,
+                            delay_min: cfgDelayMin,
+                            delay_max: cfgDelayMax,
+                            follow_daily_limit: cfgFollowDaily,
+                            max_actions_per_session: cfgMaxSession,
+                          };
+                          await supabase
+                            .from("user_settings")
+                            .upsert(
+                              { user_id: user.id, settings_json: merged, updated_at: new Date().toISOString() },
+                              { onConflict: "user_id" },
+                            );
+                          await supabase
+                            .from("ig_accounts")
+                            .update({
+                              delay_min: cfgDelayMin,
+                              delay_max: cfgDelayMax,
+                              max_actions_per_session: cfgMaxSession,
+                              updated_at: new Date().toISOString(),
+                            })
+                            .eq("id", accountId);
+                          await supabase.rpc("send_bot_command", {
+                            p_ig_account_id: accountId,
+                            p_command: "sync_settings",
+                            p_params: {},
+                          });
+                          toast({ title: "Configurações salvas", description: "Sincronizado com a extensão." });
+                          loadRecentCmds();
+                        } catch {
+                          toast({ title: "Erro ao salvar", variant: "destructive" });
+                        } finally {
+                          setSavingConfig(false);
+                        }
+                      }}
+                    >
                       {savingConfig ? "Salvando..." : "Salvar e sincronizar"}
                     </Button>
                   </div>
@@ -1233,7 +1655,6 @@ export default function QueuePage() {
 
           {/* ── TAB 2: LEITOR DE LISTA ── */}
           <TabsContent value="reader" className="flex-1 flex flex-col min-h-0 px-6 py-4 mt-0">
-
             {/* Filters bar */}
             <div className="flex gap-2 mb-3 flex-wrap">
               <div className="relative flex-1 min-w-40">
@@ -1241,30 +1662,59 @@ export default function QueuePage() {
                 <Input
                   placeholder="Buscar username..."
                   value={searchQ}
-                  onChange={(e) => { setSearchQ(e.target.value); setPage(0); }}
+                  onChange={(e) => {
+                    setSearchQ(e.target.value);
+                    setPage(0);
+                  }}
                   className="pl-8 h-8 text-xs border-border bg-secondary"
                 />
               </div>
-              <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v); setPage(0); }}>
+              <Select
+                value={filterStatus}
+                onValueChange={(v) => {
+                  setFilterStatus(v);
+                  setPage(0);
+                }}
+              >
                 <SelectTrigger className="w-32 h-8 text-xs border-border bg-secondary">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all" className="text-xs">Todos status</SelectItem>
-                  <SelectItem value="pending" className="text-xs">Pending</SelectItem>
-                  <SelectItem value="processing" className="text-xs">Processing</SelectItem>
-                  <SelectItem value="done" className="text-xs">Done</SelectItem>
-                  <SelectItem value="skipped" className="text-xs">Skipped</SelectItem>
+                  <SelectItem value="all" className="text-xs">
+                    Todos status
+                  </SelectItem>
+                  <SelectItem value="pending" className="text-xs">
+                    Pending
+                  </SelectItem>
+                  <SelectItem value="processing" className="text-xs">
+                    Processing
+                  </SelectItem>
+                  <SelectItem value="done" className="text-xs">
+                    Done
+                  </SelectItem>
+                  <SelectItem value="skipped" className="text-xs">
+                    Skipped
+                  </SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={filterSource} onValueChange={(v) => { setFilterSource(v); setPage(0); }}>
+              <Select
+                value={filterSource}
+                onValueChange={(v) => {
+                  setFilterSource(v);
+                  setPage(0);
+                }}
+              >
                 <SelectTrigger className="w-36 h-8 text-xs border-border bg-secondary">
                   <SelectValue placeholder="Fonte" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all" className="text-xs">Todas fontes</SelectItem>
+                  <SelectItem value="all" className="text-xs">
+                    Todas fontes
+                  </SelectItem>
                   {Object.entries(SOURCE_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>
+                    <SelectItem key={k} value={k} className="text-xs">
+                      {v}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1290,7 +1740,7 @@ export default function QueuePage() {
                 <tbody>
                   {pagedRows.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center text-muted-foreground py-12">
+                      <td colSpan={7} className="text-center text-muted-foreground py-12">
                         Nenhum target encontrado.
                       </td>
                     </tr>
@@ -1300,40 +1750,64 @@ export default function QueuePage() {
                         <td className="px-3 py-2 font-medium text-foreground">
                           <span className="flex items-center gap-1.5">
                             @{row.username}
-                            {(row.details as any)?.is_private && (
-                              <span aria-label="Conta privada"><Lock className="w-3 h-3 text-yellow-400 flex-shrink-0" /></span>
+                            {(row.details as Record<string, unknown>)?.is_private && (
+                              <span aria-label="Conta privada">
+                                <Lock className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+                              </span>
                             )}
-                            {(row.details as any)?.is_verified && (
-                              <span aria-label="Verificada"><BadgeCheck className="w-3 h-3 text-blue-400 flex-shrink-0" /></span>
+                            {(row.details as Record<string, unknown>)?.is_verified && (
+                              <span aria-label="Verificada">
+                                <BadgeCheck className="w-3 h-3 text-blue-400 flex-shrink-0" />
+                              </span>
                             )}
                             {(() => {
-                              const url = (row.details as any)?.profile_pic_url ?? "";
-                              return (!url || url.includes("default")) ? (
-                                <span aria-label="Sem foto"><ImageOff className="w-3 h-3 text-muted-foreground flex-shrink-0" /></span>
+                              const url = ((row.details as Record<string, unknown>)?.profile_pic_url as string) ?? "";
+                              return !url || url.includes("default") ? (
+                                <span aria-label="Sem foto">
+                                  <ImageOff className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                                </span>
                               ) : null;
                             })()}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {row.campaign_id && campaignNames[row.campaign_id]
-                            ? <span className="text-[10px] px-1.5 py-0.5 rounded-full border bg-emerald-500/20 text-emerald-400 border-emerald-500/30">{campaignNames[row.campaign_id]}</span>
-                            : "—"}
+                          {row.campaign_id && campaignNames[row.campaign_id] ? (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full border bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+                              {campaignNames[row.campaign_id]}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td className="px-3 py-2">
-                          <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border", SOURCE_COLORS[row.source ?? "manual"] ?? SOURCE_COLORS.manual)}>
+                          <span
+                            className={cn(
+                              "text-[10px] px-1.5 py-0.5 rounded-full border",
+                              SOURCE_COLORS[row.source ?? "manual"] ?? SOURCE_COLORS.manual,
+                            )}
+                          >
                             {SOURCE_LABELS[row.source ?? "manual"] ?? row.source}
                           </span>
                         </td>
                         <td className="px-3 py-2">
-                          <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border", STATUS_COLORS[row.status ?? "pending"] ?? STATUS_COLORS.pending)}>
+                          <span
+                            className={cn(
+                              "text-[10px] px-1.5 py-0.5 rounded-full border",
+                              STATUS_COLORS[row.status ?? "pending"] ?? STATUS_COLORS.pending,
+                            )}
+                          >
                             {row.status ?? "pending"}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {row.created_at ? formatDistanceToNow(new Date(row.created_at), { addSuffix: true, locale: ptBR }) : "—"}
+                          {row.created_at
+                            ? formatDistanceToNow(new Date(row.created_at), { addSuffix: true, locale: ptBR })
+                            : "—"}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {row.processed_at ? formatDistanceToNow(new Date(row.processed_at), { addSuffix: true, locale: ptBR }) : "—"}
+                          {row.processed_at
+                            ? formatDistanceToNow(new Date(row.processed_at), { addSuffix: true, locale: ptBR })
+                            : "—"}
                         </td>
                         <td className="px-3 py-2">
                           {row.status === "pending" || row.status === "injected" ? (
@@ -1356,13 +1830,25 @@ export default function QueuePage() {
             {/* Pagination */}
             {totalPages > 1 && (
               <div className="flex items-center justify-between mt-3">
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                >
                   <ChevronLeft className="w-3.5 h-3.5" /> Anterior
                 </Button>
                 <span className="text-xs text-muted-foreground">
                   Página {page + 1} de {totalPages}
                 </span>
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                >
                   Próxima <ChevronRight className="w-3.5 h-3.5" />
                 </Button>
               </div>
@@ -1371,10 +1857,11 @@ export default function QueuePage() {
 
           {/* ── TAB 3: LISTAS SALVAS ── */}
           <TabsContent value="saved" className="flex-1 overflow-y-auto px-6 py-4 space-y-4 mt-0">
-
             {/* Upload direto */}
             <div className="rounded-xl border border-border bg-card p-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-3">Salvar Nova Lista</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-3">
+                Salvar Nova Lista
+              </p>
               <div className="space-y-3">
                 <Input
                   placeholder="Nome da lista (ex: leads-nicho-fitness)"
@@ -1420,13 +1907,18 @@ export default function QueuePage() {
                 </label>
                 {directUploadText && (
                   <p className="text-[10px] text-muted-foreground">
-                    Arquivo carregado: <span className="text-foreground font-medium">{(() => {
-                      try {
-                        const parsed = JSON.parse(directUploadText);
-                        if (Array.isArray(parsed)) return `${parsed.length} itens`;
-                      } catch { /* ignore */ }
-                      return `${directUploadText.split("\n").filter(Boolean).length} linhas`;
-                    })()}</span>
+                    Arquivo carregado:{" "}
+                    <span className="text-foreground font-medium">
+                      {(() => {
+                        try {
+                          const parsed = JSON.parse(directUploadText) as unknown;
+                          if (Array.isArray(parsed)) return `${(parsed as unknown[]).length} itens`;
+                        } catch {
+                          /* ignore */
+                        }
+                        return `${directUploadText.split("\n").filter(Boolean).length} linhas`;
+                      })()}
+                    </span>
                   </p>
                 )}
                 <Button
@@ -1434,12 +1926,21 @@ export default function QueuePage() {
                   className="w-full text-xs h-8"
                   disabled={!directUploadName.trim() || !directUploadText.trim() || savingList}
                   onClick={async () => {
-                    let items: any[];
+                    let items: string[];
                     try {
-                      const parsed = JSON.parse(directUploadText);
-                      items = Array.isArray(parsed) ? parsed : Object.keys(parsed);
+                      const parsed = JSON.parse(directUploadText) as unknown;
+                      if (Array.isArray(parsed)) {
+                        items = (parsed as unknown[])
+                          .map((i) => (typeof i === "string" ? i : ((i as { username?: string })?.username ?? "")))
+                          .filter(Boolean);
+                      } else {
+                        items = Object.keys(parsed as object);
+                      }
                     } catch {
-                      items = directUploadText.split("\n").map(u => u.trim().replace(/^@/, "")).filter(Boolean);
+                      items = directUploadText
+                        .split("\n")
+                        .map((u) => u.trim().replace(/^@/, ""))
+                        .filter(Boolean);
                     }
                     await handleSaveList(directUploadName, items);
                     setDirectUploadName("");
@@ -1471,7 +1972,10 @@ export default function QueuePage() {
               ) : (
                 <div className="divide-y divide-border">
                   {savedLists.map((list) => (
-                    <div key={list.id} className="px-4 py-3 flex items-center gap-3 hover:bg-secondary/40 transition-colors">
+                    <div
+                      key={list.id}
+                      className="px-4 py-3 flex items-center gap-3 hover:bg-secondary/40 transition-colors"
+                    >
                       <div className="flex-1 min-w-0">
                         {renamingListId === list.id ? (
                           <div className="flex items-center gap-2">
@@ -1485,8 +1989,22 @@ export default function QueuePage() {
                                 if (e.key === "Escape") setRenamingListId(null);
                               }}
                             />
-                            <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" onClick={() => handleRenameSavedList(list.id, renameValue)}>OK</Button>
-                            <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={() => setRenamingListId(null)}>✕</Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[10px] px-2"
+                              onClick={() => handleRenameSavedList(list.id, renameValue)}
+                            >
+                              OK
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-[10px] px-2"
+                              onClick={() => setRenamingListId(null)}
+                            >
+                              ✕
+                            </Button>
                           </div>
                         ) : (
                           <>
@@ -1504,21 +2022,44 @@ export default function QueuePage() {
                       </div>
                       {renamingListId !== list.id && (
                         <div className="flex items-center gap-1 flex-shrink-0">
-                          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 border-primary/40 text-primary hover:bg-primary/10"
-                            onClick={() => handleReimportSavedList(list)} title="Importar para fila">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[10px] px-2 border-primary/40 text-primary hover:bg-primary/10"
+                            onClick={() => handleReimportSavedList(list)}
+                            title="Importar para fila"
+                          >
                             <Upload className="w-3 h-3" />
                           </Button>
-                          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2"
-                            onClick={() => handleDownloadSavedList(list)} title="Baixar JSON">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[10px] px-2"
+                            onClick={() => handleDownloadSavedList(list)}
+                            title="Baixar JSON"
+                          >
                             <Download className="w-3 h-3" />
                           </Button>
-                          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2"
-                            onClick={() => { setRenamingListId(list.id); setRenameValue(list.name); }} title="Renomear">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[10px] px-2"
+                            onClick={() => {
+                              setRenamingListId(list.id);
+                              setRenameValue(list.name);
+                            }}
+                            title="Renomear"
+                          >
                             <Pencil className="w-3 h-3" />
                           </Button>
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
-                              <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 border-destructive/40 text-destructive hover:bg-destructive/10" title="Excluir">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-[10px] px-2 border-destructive/40 text-destructive hover:bg-destructive/10"
+                                title="Excluir"
+                              >
                                 <Trash2 className="w-3 h-3" />
                               </Button>
                             </AlertDialogTrigger>
@@ -1526,12 +2067,16 @@ export default function QueuePage() {
                               <AlertDialogHeader>
                                 <AlertDialogTitle>Excluir lista "{list.name}"?</AlertDialogTitle>
                                 <AlertDialogDescription>
-                                  Esta ação não pode ser desfeita. A lista com {list.username_count} usernames será removida permanentemente.
+                                  Esta ação não pode ser desfeita. A lista com {list.username_count} usernames será
+                                  removida permanentemente.
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => handleDeleteSavedList(list.id)}>
+                                <AlertDialogAction
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  onClick={() => handleDeleteSavedList(list.id)}
+                                >
                                   Excluir
                                 </AlertDialogAction>
                               </AlertDialogFooter>
@@ -1549,19 +2094,28 @@ export default function QueuePage() {
       </div>
 
       {/* ── Import Modal ── */}
-      <Dialog open={importOpen} onOpenChange={(open) => { setImportOpen(open); if (!open) { setImportText(""); importJsonItemsRef.current = {}; setImportFilterStats(null); } }}>
+      <Dialog
+        open={importOpen}
+        onOpenChange={(open) => {
+          setImportOpen(open);
+          if (!open) {
+            setImportText("");
+            importJsonItemsRef.current = {};
+            setImportFilterStats(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">Importar Lista de Targets</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {/* File upload drop zone */}
             <label
               className="flex flex-col items-center justify-center gap-2 w-full h-20 rounded-lg border-2 border-dashed border-border bg-secondary/50 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-              const file = e.dataTransfer.files[0];
+                const file = e.dataTransfer.files[0];
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (ev) => {
@@ -1591,7 +2145,8 @@ export default function QueuePage() {
               />
               <Upload className="w-5 h-5 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">
-                Arraste um arquivo <span className="text-primary font-medium">.txt / .csv / .json</span> ou clique para selecionar
+                Arraste um arquivo <span className="text-primary font-medium">.txt / .csv / .json</span> ou clique para
+                selecionar
               </span>
             </label>
 
@@ -1618,20 +2173,29 @@ export default function QueuePage() {
               )}
             </div>
 
-            {/* Auto-filter options for JSON imports */}
             {importFilterStats && (
               <div className="space-y-2 rounded-lg border border-border bg-secondary/50 p-3">
                 <p className="text-[10px] font-medium text-foreground">Filtros automáticos</p>
                 <div className="flex items-center gap-2">
-                  <Checkbox id="import-filter-private" checked={importFilterPrivate} onCheckedChange={(v) => setImportFilterPrivate(!!v)} />
+                  <Checkbox
+                    id="import-filter-private"
+                    checked={importFilterPrivate}
+                    onCheckedChange={(v) => setImportFilterPrivate(!!v)}
+                  />
                   <label htmlFor="import-filter-private" className="text-[11px] text-muted-foreground cursor-pointer">
-                    Remover contas privadas <span className="text-destructive font-medium">({importFilterStats.removedPrivate})</span>
+                    Remover contas privadas{" "}
+                    <span className="text-destructive font-medium">({importFilterStats.removedPrivate})</span>
                   </label>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Checkbox id="import-filter-nophoto" checked={importFilterNoPhoto} onCheckedChange={(v) => setImportFilterNoPhoto(!!v)} />
+                  <Checkbox
+                    id="import-filter-nophoto"
+                    checked={importFilterNoPhoto}
+                    onCheckedChange={(v) => setImportFilterNoPhoto(!!v)}
+                  />
                   <label htmlFor="import-filter-nophoto" className="text-[11px] text-muted-foreground cursor-pointer">
-                    Remover perfis sem foto <span className="text-destructive font-medium">({importFilterStats.removedNoPhoto})</span>
+                    Remover perfis sem foto{" "}
+                    <span className="text-destructive font-medium">({importFilterStats.removedNoPhoto})</span>
                   </label>
                 </div>
               </div>
@@ -1639,28 +2203,32 @@ export default function QueuePage() {
 
             <div className="flex items-center justify-between">
               <p className="text-[10px] text-muted-foreground">
-                <span className="font-semibold text-foreground">
-                  {importUsernames.length}
-                </span>{" "}
-                username(s) após filtros
+                <span className="font-semibold text-foreground">{importUsernames.length}</span> username(s) após filtros
                 {importFilterStats && importUsernames.length < importFilterStats.total && (
                   <span className="text-destructive ml-1">
-                    ({importFilterStats.total - importUsernames.length} removido{importFilterStats.total - importUsernames.length > 1 ? "s" : ""})
+                    ({importFilterStats.total - importUsernames.length} removido
+                    {importFilterStats.total - importUsernames.length > 1 ? "s" : ""})
                   </span>
                 )}
               </p>
-              {importUsernames.length > 0 && (
-                <p className="text-[10px] text-primary">Pronto para importar</p>
-              )}
+              {importUsernames.length > 0 && <p className="text-[10px] text-primary">Pronto para importar</p>}
             </div>
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button size="sm" variant="ghost" onClick={() => { setImportOpen(false); setImportText(""); }}>Cancelar</Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setImportOpen(false);
+                setImportText("");
+              }}
+            >
+              Cancelar
+            </Button>
             <Button
               size="sm"
               variant="outline"
               onClick={() => {
-                setSaveListSource("import");
                 setSaveListName("");
                 setSaveListDialogOpen(true);
               }}
@@ -1699,21 +2267,32 @@ export default function QueuePage() {
             />
           </div>
           <DialogFooter>
-            <Button size="sm" variant="ghost" onClick={() => setManualOpen(false)}>Cancelar</Button>
-            <Button size="sm" onClick={handleManual} disabled={!manualText.trim()}>Adicionar</Button>
+            <Button size="sm" variant="ghost" onClick={() => setManualOpen(false)}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={handleManual} disabled={!manualText.trim()}>
+              Adicionar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* ── Manual Profile Pic Modal ── */}
-      <Dialog open={manualPicOpen} onOpenChange={(open) => { setManualPicOpen(open); if (!open) setManualPicUrl(""); }}>
+      <Dialog
+        open={manualPicOpen}
+        onOpenChange={(open) => {
+          setManualPicOpen(open);
+          if (!open) setManualPicUrl("");
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">Atualizar Foto de Perfil</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Não foi possível buscar a foto automaticamente (Instagram bloqueia servidores).
-            Cole a URL da foto de perfil abaixo. Você pode copiar a URL clicando com o botão direito na foto do perfil no Instagram e selecionando "Copiar endereço da imagem".
+            Não foi possível buscar a foto automaticamente (Instagram bloqueia servidores). Cole a URL da foto de perfil
+            abaixo. Você pode copiar a URL clicando com o botão direito na foto do perfil no Instagram e selecionando
+            "Copiar endereço da imagem".
           </p>
           <Input
             placeholder="https://instagram.f..."
@@ -1722,8 +2301,14 @@ export default function QueuePage() {
             className="text-xs"
           />
           <DialogFooter>
-            <Button size="sm" variant="ghost" onClick={() => setManualPicOpen(false)}>Cancelar</Button>
-            <Button size="sm" onClick={handleManualPicSave} disabled={!manualPicUrl.trim() || loadingCmd === "update_profile_pic"}>
+            <Button size="sm" variant="ghost" onClick={() => setManualPicOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleManualPicSave}
+              disabled={!manualPicUrl.trim() || loadingCmd === "update_profile_pic"}
+            >
               {loadingCmd === "update_profile_pic" ? "Salvando..." : "Salvar"}
             </Button>
           </DialogFooter>
@@ -1731,7 +2316,13 @@ export default function QueuePage() {
       </Dialog>
 
       {/* ── Save List Name Dialog ── */}
-      <Dialog open={saveListDialogOpen} onOpenChange={(open) => { setSaveListDialogOpen(open); if (!open) setSaveListName(""); }}>
+      <Dialog
+        open={saveListDialogOpen}
+        onOpenChange={(open) => {
+          setSaveListDialogOpen(open);
+          if (!open) setSaveListName("");
+        }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-sm">Salvar Lista</DialogTitle>
@@ -1757,7 +2348,9 @@ export default function QueuePage() {
             </p>
           </div>
           <DialogFooter>
-            <Button size="sm" variant="ghost" onClick={() => setSaveListDialogOpen(false)}>Cancelar</Button>
+            <Button size="sm" variant="ghost" onClick={() => setSaveListDialogOpen(false)}>
+              Cancelar
+            </Button>
             <Button
               size="sm"
               disabled={!saveListName.trim() || savingList}
