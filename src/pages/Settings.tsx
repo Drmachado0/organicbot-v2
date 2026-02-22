@@ -917,6 +917,8 @@ export default function BotSettings() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [accountsList, setAccountsList] = useState<{ id: string; ig_username: string }[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
 
   const set = useCallback(<K extends keyof BotSettings>(key: K, value: BotSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -928,10 +930,14 @@ export default function BotSettings() {
     if (!user) return;
     (async () => {
       setIsLoading(true);
-      const [settingsRes, accountRes] = await Promise.all([
+      const [settingsRes, accountRes, accountsListRes] = await Promise.all([
         supabase.from("user_settings").select("settings_json").eq("user_id", user.id).maybeSingle(),
         supabase.from("ig_accounts").select("delay_min, delay_max, bot_mode, likes_per_follow, max_actions_per_session").eq("user_id", user.id).eq("is_active", true).order("created_at").limit(1).maybeSingle(),
+        supabase.from("ig_accounts").select("id, ig_username").eq("user_id", user.id).eq("is_active", true).order("created_at"),
       ]);
+      const accs = (accountsListRes.data ?? []) as { id: string; ig_username: string }[];
+      setAccountsList(accs);
+      if (accs.length > 0 && !selectedAccountId) setSelectedAccountId(accs[0].id);
       const base = parseSettings((settingsRes.data?.settings_json as Record<string, unknown>) ?? null);
       // Merge ig_accounts fields that override user_settings (source of truth for extension)
       if (accountRes.data) {
@@ -1053,6 +1059,24 @@ export default function BotSettings() {
           Salvar
         </Button>
       </div>
+
+      {accountsList.length > 1 && (
+        <div className="flex items-center gap-3 mb-4 animate-fade-in">
+          <Instagram className="h-4 w-4 text-muted-foreground" />
+          <p className="text-sm font-medium">Configurando conta:</p>
+          <select
+            value={selectedAccountId}
+            onChange={(e) => setSelectedAccountId(e.target.value)}
+            className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm"
+          >
+            {accountsList.map((a) => (
+              <option key={a.id} value={a.id}>
+                @{a.ig_username}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
