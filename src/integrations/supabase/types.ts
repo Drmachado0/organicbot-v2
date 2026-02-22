@@ -250,6 +250,7 @@ export type Database = {
           profile_pic_url: string | null
           queue_processed: number | null
           queue_total: number | null
+          safety_preset: string | null
           updated_at: string | null
           user_id: string | null
         }
@@ -277,6 +278,7 @@ export type Database = {
           profile_pic_url?: string | null
           queue_processed?: number | null
           queue_total?: number | null
+          safety_preset?: string | null
           updated_at?: string | null
           user_id?: string | null
         }
@@ -304,6 +306,7 @@ export type Database = {
           profile_pic_url?: string | null
           queue_processed?: number | null
           queue_total?: number | null
+          safety_preset?: string | null
           updated_at?: string | null
           user_id?: string | null
         }
