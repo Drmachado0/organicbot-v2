@@ -106,6 +106,31 @@ export default function ExtensionPage() {
       });
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel(`extension-status-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "ig_accounts",
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as IgAccount;
+          setAccounts((prev) =>
+            prev.map((a) => (a.id === row.id ? { ...a, ...row } : a))
+          );
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
   const refresh = () => {
     if (!user) return;
     setLoading(true);
