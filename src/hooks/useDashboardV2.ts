@@ -341,7 +341,7 @@ export function useDashboardV2(): DashboardData {
     if (!activeAccountId) return;
     try {
       const newPaused = !automationPaused;
-      const command = newPaused ? "pause" : "start";
+      const command = newPaused ? "pause" : "resume";
 
       // Send real bot command via RPC
       const { error: cmdError } = await supabase.rpc("send_bot_command", {
