@@ -65,6 +65,7 @@ interface DaySchedule {
   stop: string;    // "HH:MM"
   follows: number;
   likes: number;
+  mode?: string;
 }
 
 type WeekSchedule = Record<DayKey, DaySchedule>;
@@ -146,7 +147,7 @@ function weekScheduleToBotSchedule(week: WeekSchedule): object {
         stop: week[key].stop,
         follows: week[key].follows,
         likes: week[key].likes,
-        mode: "seguir_curtir",
+        mode: week[key].mode ?? "seguir_curtir",
       };
       return acc;
     }, {} as Record<string, unknown>),
