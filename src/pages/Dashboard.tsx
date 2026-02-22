@@ -300,9 +300,14 @@ export default function Dashboard() {
           <HealthAlertsCard
             todayActions={todayActions}
             pendingQueueCount={pendingQueueCount}
-            botOnline={account?.bot_online ?? false}
+            botOnline={(() => {
+              if (!account?.bot_online || !account?.last_heartbeat) return false;
+              const diff = Date.now() - new Date(account.last_heartbeat).getTime();
+              return diff < 6 * 60 * 1000;
+            })()}
             igAccountId={activeAccountId}
             lastHeartbeat={account?.last_heartbeat ?? null}
+            limits={dailyLimits}
             isLoading={isLoading}
           />
         </section>
