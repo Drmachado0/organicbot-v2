@@ -1,49 +1,75 @@
 
 
-# Corrigir erro "organic_timings does not exist"
+# Nova Aba "Listas Salvas" na Fila de Targets
 
-## Problema
+## Objetivo
+Adicionar uma terceira aba na pagina `/queue` chamada **"Listas Salvas"** para guardar arquivos JSON/TXT que foram carregados, permitindo reprocessamento futuro. Cada lista salva tera um nome, data de criacao, quantidade de usernames e os dados completos.
 
-Os logs do Postgres mostram erros repetidos:
+## Como vai funcionar
 
-```
-ERROR: column ig_accounts.organic_timings does not exist
-```
+1. **Nova aba "Listas Salvas"** ao lado de "Coletor" e "Leitor de Lista"
+2. **Salvar lista**: Ao importar um arquivo na aba Coletor, um botao extra "Salvar lista" aparecera para guardar os dados brutos com um nome
+3. **Visualizar listas salvas**: Tabela com nome, data, quantidade de usernames
+4. **Acoes por lista**: Re-importar para a fila, baixar como JSON, renomear, excluir
+5. **Upload direto**: Botao para fazer upload e salvar sem importar para a fila imediatamente
 
-A extensao Chrome tenta ler/gravar `organic_timings` na tabela `ig_accounts`, mas a coluna nao existe. Mesmo padrao dos erros anteriores (`safety_preset` e `safety_limits`).
+## Detalhes Tecnicos
 
-## Solucao
-
-### 1. Migracao SQL
-
-Adicionar a coluna `organic_timings` como `jsonb` com um default sensato. Essa coluna provavelmente armazena os horarios em que o bot deve simular atividade organica (pausas, horarios de pico, etc).
+### 1. Nova tabela Supabase: `saved_lists`
 
 ```sql
-ALTER TABLE public.ig_accounts
-  ADD COLUMN IF NOT EXISTS organic_timings jsonb
-  DEFAULT '{"morning": true, "afternoon": true, "evening": true, "night": false}'::jsonb;
+CREATE TABLE saved_lists (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  ig_account_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  data JSONB NOT NULL DEFAULT '[]',
+  username_count INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE saved_lists ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users manage own saved_lists" ON saved_lists
+  FOR ALL USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 ```
 
-### 2. Atualizar Settings para gravar organic_timings
+### 2. Mudancas em `src/pages/Queue.tsx`
 
-Na funcao `save()` de `src/pages/Settings.tsx`, ao salvar configuracoes, tambem gravar `organic_timings` no update de `ig_accounts` com base no schedule/horarios configurados pelo usuario.
+- Adicionar tab "Listas Salvas" no `TabsList`
+- Novo `TabsContent` com:
+  - Botao de upload para salvar lista (com campo de nome)
+  - Tabela listando as listas salvas com colunas: Nome, Usernames, Data, Acoes
+  - Acoes: "Importar para fila", "Baixar JSON", "Renomear", "Excluir"
+- No modal de importacao existente, adicionar botao "Salvar como lista" ao lado de "Importar"
+- State novo: `savedLists`, `loadSavedLists()`, `savingList`
+- Dialog para nomear a lista ao salvar
 
-### 3. Varredura de erros adicionais
+### 3. Fluxo do usuario
 
-Apos a migracao, verificar os logs novamente para confirmar que nao ha mais colunas faltando. Se houver, serao corrigidas no mesmo ciclo.
+```text
+Upload arquivo JSON/TXT
+       |
+       v
+  Modal de Importacao
+   /              \
+  v                v
+Importar       Salvar como Lista
+para fila     (pede nome -> salva no DB)
+                   |
+                   v
+            Aba "Listas Salvas"
+            - Ver todas as listas
+            - Re-importar quando quiser
+            - Baixar / Excluir
+```
 
-## Detalhes tecnicos
+### 4. Layout da aba "Listas Salvas"
 
-### Arquivo: nova migracao SQL
-- `ALTER TABLE public.ig_accounts ADD COLUMN IF NOT EXISTS organic_timings jsonb DEFAULT '{"morning": true, "afternoon": true, "evening": true, "night": false}'::jsonb;`
-
-### Arquivo: `src/pages/Settings.tsx`
-- Na funcao `save()`, adicionar `organic_timings` ao objeto de update de `ig_accounts`
-- Derivar os valores do `bot_schedule` existente (se houver horarios configurados, mapear para os periodos morning/afternoon/evening/night)
-
-### Tipos TypeScript
-- `src/integrations/supabase/types.ts` sera atualizado automaticamente apos a migracao
-
-### Nenhuma mudanca na extensao
-- A extensao ja tenta ler `organic_timings` -- basta que a coluna exista com dados validos
+- Card de upload no topo (drag-and-drop + campo de nome)
+- Tabela abaixo com as listas salvas
+- Cada linha: nome editavel, contagem, data relativa, botoes de acao
+- Estilo consistente com o restante da pagina (dark theme, badges, etc.)
 
