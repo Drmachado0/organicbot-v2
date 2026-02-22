@@ -17,13 +17,14 @@ export function useBotStatus(user: User | null): BotStatusSummary {
     // Seed initial states
     supabase
       .from("ig_accounts")
-      .select("id, bot_online")
+      .select("id, last_heartbeat")
       .eq("user_id", user.id)
       .eq("is_active", true)
       .then(({ data }) => {
         const map: Record<string, boolean> = {};
         (data ?? []).forEach((acc) => {
-          map[acc.id] = acc.bot_online ?? false;
+          const diff = acc.last_heartbeat ? Date.now() - new Date(acc.last_heartbeat).getTime() : Infinity;
+          map[acc.id] = diff < 6 * 60 * 1000;
         });
         setStatusMap(map);
       });
@@ -40,7 +41,7 @@ export function useBotStatus(user: User | null): BotStatusSummary {
           filter: `user_id=eq.${user.id}`,
         },
         (payload) => {
-          const row = payload.new as { id: string; bot_online: boolean | null; is_active: boolean | null };
+          const row = payload.new as { id: string; last_heartbeat: string | null; is_active: boolean | null };
           if (row.is_active === false) {
             setStatusMap((prev) => {
               const next = { ...prev };
@@ -48,7 +49,8 @@ export function useBotStatus(user: User | null): BotStatusSummary {
               return next;
             });
           } else {
-            setStatusMap((prev) => ({ ...prev, [row.id]: row.bot_online ?? false }));
+            const diff = row.last_heartbeat ? Date.now() - new Date(row.last_heartbeat).getTime() : Infinity;
+            setStatusMap((prev) => ({ ...prev, [row.id]: diff < 6 * 60 * 1000 }));
           }
         }
       )
