@@ -99,14 +99,6 @@ interface BotSettings {
   week_schedule: WeekSchedule;
   // Filters
   dont_unfollow_followers: boolean;
-  dont_unfollow_fresh: boolean;
-  dont_unfollow_fresh_days: number;
-  dont_unfollow_non_organicbot: boolean;
-  dont_block_matching_filters: boolean;
-  dont_unfollow_matching_filters: boolean;
-  follow_already_attempted: boolean;
-  randomize_delay: boolean;
-  randomize_percent: number;
   // Notifications
   email_notifications: boolean;
 }
@@ -122,14 +114,6 @@ const DEFAULTS: BotSettings = {
   max_actions_per_session: 35,
   week_schedule: DEFAULT_WEEK_SCHEDULE,
   dont_unfollow_followers: true,
-  dont_unfollow_fresh: true,
-  dont_unfollow_fresh_days: 3,
-  dont_unfollow_non_organicbot: true,
-  dont_block_matching_filters: true,
-  dont_unfollow_matching_filters: true,
-  follow_already_attempted: false,
-  randomize_delay: true,
-  randomize_percent: 50,
   email_notifications: true,
 };
 
@@ -215,14 +199,6 @@ function parseSettings(raw: Record<string, unknown> | null): BotSettings {
     max_actions_per_session: Number(raw.max_actions_per_session ?? DEFAULTS.max_actions_per_session),
     week_schedule,
     dont_unfollow_followers: Boolean(raw.dont_unfollow_followers ?? DEFAULTS.dont_unfollow_followers),
-    dont_unfollow_fresh: Boolean(raw.dont_unfollow_fresh ?? DEFAULTS.dont_unfollow_fresh),
-    dont_unfollow_fresh_days: Number(raw.dont_unfollow_fresh_days ?? DEFAULTS.dont_unfollow_fresh_days),
-    dont_unfollow_non_organicbot: Boolean(raw.dont_unfollow_non_organicbot ?? DEFAULTS.dont_unfollow_non_organicbot),
-    dont_block_matching_filters: Boolean(raw.dont_block_matching_filters ?? DEFAULTS.dont_block_matching_filters),
-    dont_unfollow_matching_filters: Boolean(raw.dont_unfollow_matching_filters ?? DEFAULTS.dont_unfollow_matching_filters),
-    follow_already_attempted: Boolean(raw.follow_already_attempted ?? DEFAULTS.follow_already_attempted),
-    randomize_delay: Boolean(raw.randomize_delay ?? DEFAULTS.randomize_delay),
-    randomize_percent: Number(raw.randomize_percent ?? DEFAULTS.randomize_percent),
     email_notifications: Boolean(raw.email_notifications ?? DEFAULTS.email_notifications),
   };
 }
@@ -1582,52 +1558,6 @@ export default function BotSettings() {
                   onCheckedChange={(v) => set("dont_unfollow_followers", v)}
                 />
 
-                {/* Em breve — não implementados na extensão */}
-                <div className="opacity-50 pointer-events-none space-y-4">
-                  <div className="relative">
-                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
-                    <ToggleRow
-                      label="Não desfazer seguimento recente"
-                      description={`Aguarda ${settings.dont_unfollow_fresh_days} dias antes de unfollow`}
-                      checked={settings.dont_unfollow_fresh}
-                      onCheckedChange={() => {}}
-                    />
-                  </div>
-                  <div className="relative">
-                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
-                    <ToggleRow
-                      label="Não desfazer seguimento de não-organicbot"
-                      description="Só desfaz follows realizados por este bot"
-                      checked={settings.dont_unfollow_non_organicbot}
-                      onCheckedChange={() => {}}
-                    />
-                  </div>
-                  <div className="relative">
-                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
-                    <ToggleRow
-                      label="Não bloquear contas que passam nos filtros"
-                      checked={settings.dont_block_matching_filters}
-                      onCheckedChange={() => {}}
-                    />
-                  </div>
-                  <div className="relative">
-                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
-                    <ToggleRow
-                      label="Não desfazer seguimento de contas nos filtros"
-                      checked={settings.dont_unfollow_matching_filters}
-                      onCheckedChange={() => {}}
-                    />
-                  </div>
-                  <div className="relative">
-                    <Badge variant="outline" className="absolute -top-1 right-0 text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-400 z-10">Em breve</Badge>
-                    <ToggleRow
-                      label="Seguir contas já tentadas anteriormente"
-                      description="Reprocessa targets que já foram tentados"
-                      checked={settings.follow_already_attempted}
-                      onCheckedChange={() => {}}
-                    />
-                  </div>
-                </div>
               </div>
             </SectionCard>
 
@@ -1659,7 +1589,7 @@ export default function BotSettings() {
                     { label: "Like/dia", value: settings.like_daily_limit, color: "hsl(320 65% 60%)" },
                     { label: "Delay", value: `${settings.delay_min}–${settings.delay_max}s`, color: "hsl(42 96% 56%)" },
                     { label: "Dias ativos", value: `${activeDays}/7`, color: "hsl(252 62% 60%)" },
-                    { label: "Proteções", value: [settings.dont_unfollow_followers, settings.dont_unfollow_fresh, settings.dont_unfollow_non_organicbot].filter(Boolean).length + "/3", color: "hsl(215 20% 55%)" },
+                    { label: "Proteções", value: settings.dont_unfollow_followers ? "1/1" : "0/1", color: "hsl(215 20% 55%)" },
                   ].map(({ label, value, color }) => (
                     <div key={label} className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">{label}</span>
