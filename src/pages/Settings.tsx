@@ -998,6 +998,17 @@ export default function BotSettings() {
           unfollow_daily: Math.round(settings.follow_daily_limit * 0.7),
           like_daily: settings.follow_daily_limit * settings.likes_per_follow,
         } as unknown as import("@/integrations/supabase/types").Json,
+        organic_timings: (() => {
+          const ws = settings.week_schedule;
+          const anyActive = (hours: string[]) =>
+            Object.values(ws).some((d) => d.active && hours.some((h) => d.start <= h && h < d.stop));
+          return {
+            morning: anyActive(["06:00", "07:00", "08:00", "09:00", "10:00", "11:00"]),
+            afternoon: anyActive(["12:00", "13:00", "14:00", "15:00", "16:00", "17:00"]),
+            evening: anyActive(["18:00", "19:00", "20:00", "21:00"]),
+            night: anyActive(["22:00", "23:00", "00:00", "01:00", "02:00"]),
+          };
+        })() as unknown as import("@/integrations/supabase/types").Json,
         updated_at: new Date().toISOString(),
       } as any).eq("id", selectedAccountId ?? "");
       if (accountError) throw accountError;

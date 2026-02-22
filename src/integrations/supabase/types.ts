@@ -246,6 +246,7 @@ export type Database = {
           last_heartbeat: string | null
           likes_per_follow: number | null
           max_actions_per_session: number | null
+          organic_timings: Json | null
           posts_count: number | null
           profile_pic_url: string | null
           queue_processed: number | null
@@ -275,6 +276,7 @@ export type Database = {
           last_heartbeat?: string | null
           likes_per_follow?: number | null
           max_actions_per_session?: number | null
+          organic_timings?: Json | null
           posts_count?: number | null
           profile_pic_url?: string | null
           queue_processed?: number | null
@@ -304,6 +306,7 @@ export type Database = {
           last_heartbeat?: string | null
           likes_per_follow?: number | null
           max_actions_per_session?: number | null
+          organic_timings?: Json | null
           posts_count?: number | null
           profile_pic_url?: string | null
           queue_processed?: number | null
