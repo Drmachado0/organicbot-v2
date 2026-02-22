@@ -1,0 +1,1 @@
+ALTER TABLE public.ig_accounts ADD COLUMN IF NOT EXISTS safety_preset text DEFAULT 'media';

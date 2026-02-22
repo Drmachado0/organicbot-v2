@@ -139,7 +139,7 @@ export default function ExtensionPage() {
     // Fetch accounts
     supabase
       .from("ig_accounts")
-      .select("id, ig_username, last_heartbeat, bridge_version, bot_online, delay_min, delay_max, max_actions_per_session")
+      .select("id, ig_username, last_heartbeat, bridge_version, bot_online, delay_min, delay_max, max_actions_per_session, safety_preset")
       .eq("user_id", user.id)
       .eq("is_active", true)
       .then(({ data }) => {

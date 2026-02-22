@@ -971,6 +971,20 @@ export default function BotSettings() {
       if (settingsError) throw settingsError;
 
       // 2. Sync critical fields to ig_accounts (what the extension actually reads)
+      // Detect closest safety preset
+      const presetDiffs = [
+        { id: "nova", follows: 40, session: 20 },
+        { id: "media", follows: 100, session: 50 },
+        { id: "madura", follows: 200, session: 100 },
+      ].map((p) => ({
+        id: p.id,
+        diff:
+          Math.abs(settings.follow_daily_limit - p.follows) / 200 +
+          Math.abs(settings.max_actions_per_session - p.session) / 100,
+      }));
+      presetDiffs.sort((a, b) => a.diff - b.diff);
+      const detectedPreset = presetDiffs[0].id;
+
       const { error: accountError } = await supabase.from("ig_accounts").update({
         delay_min: settings.delay_min,
         delay_max: settings.delay_max,
@@ -978,8 +992,9 @@ export default function BotSettings() {
         likes_per_follow: settings.likes_per_follow,
         max_actions_per_session: settings.max_actions_per_session,
         bot_schedule: botSchedule as unknown as import("@/integrations/supabase/types").Json,
+        safety_preset: detectedPreset,
         updated_at: new Date().toISOString(),
-      }).eq("id", selectedAccountId ?? "");
+      } as any).eq("id", selectedAccountId ?? "");
       if (accountError) throw accountError;
 
       // 3. Auto-sync: send sync_settings command to all active accounts
