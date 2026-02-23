@@ -26,16 +26,16 @@ interface IgAccount {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  success: "hsl(152 72% 48%)",
-  failed:  "hsl(0 72% 55%)",
-  skipped: "hsl(42 96% 56%)",
+  success: "rgb(52, 211, 153)",
+  failed:  "rgb(239, 68, 68)",
+  skipped: "rgb(234, 179, 8)",
 };
 
-const ACTION_COLOR: Record<string, string> = {
-  follow:   "hsl(152 72% 48%)",
-  unfollow: "hsl(0 72% 55%)",
-  like:     "hsl(320 65% 60%)",
-  comment:  "hsl(252 62% 60%)",
+const ACTION_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  follow:   { bg: "rgba(52, 211, 153, 0.15)", text: "rgb(52, 211, 153)",  border: "rgba(52, 211, 153, 0.3)" },
+  unfollow: { bg: "rgba(239, 68, 68, 0.15)",  text: "rgb(239, 68, 68)",   border: "rgba(239, 68, 68, 0.3)" },
+  like:     { bg: "rgba(217, 70, 160, 0.15)", text: "rgb(217, 70, 160)",  border: "rgba(217, 70, 160, 0.3)" },
+  comment:  { bg: "rgba(139, 92, 246, 0.15)", text: "rgb(139, 92, 246)",  border: "rgba(139, 92, 246, 0.3)" },
 };
 
 const MAX_ACTIONS = 200;
@@ -172,7 +172,7 @@ export default function Actions() {
           <div className="flex items-center gap-1.5 ml-1">
             <span
               className="w-1.5 h-1.5 rounded-full animate-pulse"
-              style={{ backgroundColor: "hsl(152 72% 48%)" }}
+              style={{ backgroundColor: "rgb(52, 211, 153)" }}
             />
             <span className="text-xs text-muted-foreground">live</span>
           </div>
@@ -256,16 +256,21 @@ export default function Actions() {
                         {a.executed_at ? new Date(a.executed_at).toLocaleString("pt-BR") : "—"}
                       </td>
                       <td className="py-2.5 px-4">
-                        <Badge
-                          className="text-xs capitalize"
-                          style={{
-                            backgroundColor: `${ACTION_COLOR[a.action_type.toLowerCase()] ?? "hsl(215 20% 45%)"}/15`,
-                            color: ACTION_COLOR[a.action_type.toLowerCase()] ?? "hsl(215 20% 65%)",
-                            border: `1px solid ${ACTION_COLOR[a.action_type.toLowerCase()] ?? "hsl(215 20% 45%)"}/30`,
-                          }}
-                        >
-                          {a.action_type}
-                        </Badge>
+                        {(() => {
+                          const c = ACTION_COLORS[a.action_type.toLowerCase()];
+                          return (
+                            <Badge
+                              className="text-xs capitalize"
+                              style={{
+                                backgroundColor: c?.bg ?? "rgba(148, 163, 184, 0.15)",
+                                color: c?.text ?? "rgb(148, 163, 184)",
+                                border: `1px solid ${c?.border ?? "rgba(148, 163, 184, 0.3)"}`,
+                              }}
+                            >
+                              {a.action_type}
+                            </Badge>
+                          );
+                        })()}
                       </td>
                       <td className="py-2.5 px-4 font-medium">
                         {a.target_username ? `@${a.target_username}` : "—"}
@@ -288,7 +293,7 @@ export default function Actions() {
                         {a.isNew && (
                           <span
                             className="text-xs font-semibold px-1.5 py-0.5 rounded-full animate-pulse"
-                            style={{ backgroundColor: "hsl(152 72% 48% / 0.15)", color: "hsl(152 72% 48%)" }}
+                            style={{ backgroundColor: "rgba(52, 211, 153, 0.15)", color: "rgb(52, 211, 153)" }}
                           >
                             novo
                           </span>
