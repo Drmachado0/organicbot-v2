@@ -1,52 +1,51 @@
 
 
-# Ajuste do Sistema de Sessao para Nao Bloquear a Extensao
+# Corrigir Cores Ilegíveis nos Badges da Página de Ações
 
 ## Problema
-O campo `max_actions_per_session` esta limitando a extensao Chrome. Quando o limite de sessao e atingido, a extensao para e nao retoma automaticamente. Isso impede a execucao continua do bot.
+Os badges de tipo de ação (Follow, Like, Unfollow, Comment) e status estão com cores ilegíveis. A causa é o uso de sintaxe CSS inválida para opacidade nas cores HSL: `hsl(152 72% 48%)/15` não é CSS válido. O correto seria `hsl(152 72% 48% / 0.15)`.
 
-## Solucao Proposta
-Duas mudancas no `Settings.tsx`:
+## Correções em `src/pages/Actions.tsx`
 
-### 1. Adicionar toggle "Renovar sessao automaticamente"
-- Novo campo booleano `auto_renew_session` (default: `true`)
-- Quando ativado, o valor `MAX_PER_SESSION` enviado para `safety_limits` sera igual ao `MAX_PER_DAY` (efetivamente sem limite de sessao separado)
-- Quando desativado, funciona como antes com `max_actions_per_session`
+### 1. Corrigir cores dos badges de tipo de ação (linhas ~178-185)
 
-### 2. Alterar o valor padrao de `max_actions_per_session`
-- Aumentar o default de 35 para um valor igual ao `follow_daily_limit` (sem limite de sessao por padrao)
-- Os presets continuam sugerindo valores de sessao, mas o usuario pode desativar via toggle
+Substituir a construção inline de `style` que usa template literals quebrados:
 
-## Mudancas Tecnicas
+**Antes:**
+```
+backgroundColor: `${ACTION_COLOR[...]}/15`,
+color: ACTION_COLOR[...],
+border: `1px solid ${ACTION_COLOR[...]}/30`,
+```
 
-### `src/pages/Settings.tsx`
+**Depois:** Usar a função `hsl()` com canal alpha correto, por exemplo convertendo as cores para incluir alpha diretamente:
 
-1. **Interface `BotSettings`** (linha 86): adicionar `auto_renew_session: boolean`
+```typescript
+const ACTION_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  follow:   { bg: "rgba(52, 211, 153, 0.15)", text: "rgb(52, 211, 153)",  border: "rgba(52, 211, 153, 0.3)" },
+  unfollow: { bg: "rgba(239, 68, 68, 0.15)",  text: "rgb(239, 68, 68)",   border: "rgba(239, 68, 68, 0.3)" },
+  like:     { bg: "rgba(217, 70, 160, 0.15)", text: "rgb(217, 70, 160)",  border: "rgba(217, 70, 160, 0.3)" },
+  comment:  { bg: "rgba(139, 92, 246, 0.15)", text: "rgb(139, 92, 246)",  border: "rgba(139, 92, 246, 0.3)" },
+};
+```
 
-2. **`DEFAULTS`** (linha 106): adicionar `auto_renew_session: true`
+E no JSX:
+```tsx
+style={{
+  backgroundColor: colors?.bg ?? "rgba(148, 163, 184, 0.15)",
+  color: colors?.text ?? "rgb(148, 163, 184)",
+  border: `1px solid ${colors?.border ?? "rgba(148, 163, 184, 0.3)"}`,
+}}
+```
 
-3. **`parseSettings`** (linha 177): parsear `auto_renew_session` do JSON salvo
+### 2. Corrigir cores dos status (mesma abordagem)
 
-4. **Funcao `save`** (linha 945): quando `auto_renew_session === true`, enviar `MAX_PER_SESSION` com valor alto (9999) em `safety_limits`, e `max_actions_per_session` com 9999 em `ig_accounts`
+Converter `STATUS_COLOR` para usar RGB com alpha correto, garantindo que o texto do status e o dot indicator fiquem visíveis.
 
-5. **Aplicacao de presets** (linha 1207): quando um preset e aplicado, se `auto_renew_session` estiver ativo, o `MAX_PER_SESSION` continua sendo 9999
+### 3. Corrigir badge "novo" (linha ~199)
 
-6. **UI do slider "Max acoes/sessao"** (linha 1378): 
-   - Adicionar um toggle "Renovar sessao automaticamente" acima do slider
-   - Quando ativo, o slider fica desabilitado (opacity-50) e mostra "Sem limite de sessao"
-   - Quando desativado, o slider funciona normalmente
+O badge "novo" também usa a mesma sintaxe quebrada com `hsl(... / 0.15)` inline. Converter para `rgba()`.
 
-7. **`safety_limits` no save** (linha 983-988): usar `auto_renew_session ? 9999 : settings.max_actions_per_session` para `MAX_PER_SESSION`
-
-8. **Synced fields** (linha 811): adicionar nota que `max_actions_per_session` pode ser "ilimitado" quando renovacao automatica esta ativa
-
-### Impacto nos Presets
-- Os presets continuam definindo um valor de `session` para referencia
-- Mas se `auto_renew_session` estiver ativo, o valor efetivo enviado sera 9999
-- A UI mostrara "Sessao: ilimitada" quando o toggle estiver ativo
-
-### Sem mudancas no banco de dados
-- O campo `max_actions_per_session` ja existe em `ig_accounts`
-- O campo `auto_renew_session` sera salvo dentro de `settings_json` em `user_settings`
-- `safety_limits.MAX_PER_SESSION` ja existe e sera ajustado para 9999
+### Arquivos alterados
+- `src/pages/Actions.tsx` - Corrigir todas as cores inline dos badges e status
 
