@@ -1,75 +1,52 @@
 
 
-# Nova Aba "Listas Salvas" na Fila de Targets
+# Ajuste do Sistema de Sessao para Nao Bloquear a Extensao
 
-## Objetivo
-Adicionar uma terceira aba na pagina `/queue` chamada **"Listas Salvas"** para guardar arquivos JSON/TXT que foram carregados, permitindo reprocessamento futuro. Cada lista salva tera um nome, data de criacao, quantidade de usernames e os dados completos.
+## Problema
+O campo `max_actions_per_session` esta limitando a extensao Chrome. Quando o limite de sessao e atingido, a extensao para e nao retoma automaticamente. Isso impede a execucao continua do bot.
 
-## Como vai funcionar
+## Solucao Proposta
+Duas mudancas no `Settings.tsx`:
 
-1. **Nova aba "Listas Salvas"** ao lado de "Coletor" e "Leitor de Lista"
-2. **Salvar lista**: Ao importar um arquivo na aba Coletor, um botao extra "Salvar lista" aparecera para guardar os dados brutos com um nome
-3. **Visualizar listas salvas**: Tabela com nome, data, quantidade de usernames
-4. **Acoes por lista**: Re-importar para a fila, baixar como JSON, renomear, excluir
-5. **Upload direto**: Botao para fazer upload e salvar sem importar para a fila imediatamente
+### 1. Adicionar toggle "Renovar sessao automaticamente"
+- Novo campo booleano `auto_renew_session` (default: `true`)
+- Quando ativado, o valor `MAX_PER_SESSION` enviado para `safety_limits` sera igual ao `MAX_PER_DAY` (efetivamente sem limite de sessao separado)
+- Quando desativado, funciona como antes com `max_actions_per_session`
 
-## Detalhes Tecnicos
+### 2. Alterar o valor padrao de `max_actions_per_session`
+- Aumentar o default de 35 para um valor igual ao `follow_daily_limit` (sem limite de sessao por padrao)
+- Os presets continuam sugerindo valores de sessao, mas o usuario pode desativar via toggle
 
-### 1. Nova tabela Supabase: `saved_lists`
+## Mudancas Tecnicas
 
-```sql
-CREATE TABLE saved_lists (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL,
-  ig_account_id UUID NOT NULL,
-  name TEXT NOT NULL,
-  data JSONB NOT NULL DEFAULT '[]',
-  username_count INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
+### `src/pages/Settings.tsx`
 
-ALTER TABLE saved_lists ENABLE ROW LEVEL SECURITY;
+1. **Interface `BotSettings`** (linha 86): adicionar `auto_renew_session: boolean`
 
-CREATE POLICY "Users manage own saved_lists" ON saved_lists
-  FOR ALL USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
-```
+2. **`DEFAULTS`** (linha 106): adicionar `auto_renew_session: true`
 
-### 2. Mudancas em `src/pages/Queue.tsx`
+3. **`parseSettings`** (linha 177): parsear `auto_renew_session` do JSON salvo
 
-- Adicionar tab "Listas Salvas" no `TabsList`
-- Novo `TabsContent` com:
-  - Botao de upload para salvar lista (com campo de nome)
-  - Tabela listando as listas salvas com colunas: Nome, Usernames, Data, Acoes
-  - Acoes: "Importar para fila", "Baixar JSON", "Renomear", "Excluir"
-- No modal de importacao existente, adicionar botao "Salvar como lista" ao lado de "Importar"
-- State novo: `savedLists`, `loadSavedLists()`, `savingList`
-- Dialog para nomear a lista ao salvar
+4. **Funcao `save`** (linha 945): quando `auto_renew_session === true`, enviar `MAX_PER_SESSION` com valor alto (9999) em `safety_limits`, e `max_actions_per_session` com 9999 em `ig_accounts`
 
-### 3. Fluxo do usuario
+5. **Aplicacao de presets** (linha 1207): quando um preset e aplicado, se `auto_renew_session` estiver ativo, o `MAX_PER_SESSION` continua sendo 9999
 
-```text
-Upload arquivo JSON/TXT
-       |
-       v
-  Modal de Importacao
-   /              \
-  v                v
-Importar       Salvar como Lista
-para fila     (pede nome -> salva no DB)
-                   |
-                   v
-            Aba "Listas Salvas"
-            - Ver todas as listas
-            - Re-importar quando quiser
-            - Baixar / Excluir
-```
+6. **UI do slider "Max acoes/sessao"** (linha 1378): 
+   - Adicionar um toggle "Renovar sessao automaticamente" acima do slider
+   - Quando ativo, o slider fica desabilitado (opacity-50) e mostra "Sem limite de sessao"
+   - Quando desativado, o slider funciona normalmente
 
-### 4. Layout da aba "Listas Salvas"
+7. **`safety_limits` no save** (linha 983-988): usar `auto_renew_session ? 9999 : settings.max_actions_per_session` para `MAX_PER_SESSION`
 
-- Card de upload no topo (drag-and-drop + campo de nome)
-- Tabela abaixo com as listas salvas
-- Cada linha: nome editavel, contagem, data relativa, botoes de acao
-- Estilo consistente com o restante da pagina (dark theme, badges, etc.)
+8. **Synced fields** (linha 811): adicionar nota que `max_actions_per_session` pode ser "ilimitado" quando renovacao automatica esta ativa
+
+### Impacto nos Presets
+- Os presets continuam definindo um valor de `session` para referencia
+- Mas se `auto_renew_session` estiver ativo, o valor efetivo enviado sera 9999
+- A UI mostrara "Sessao: ilimitada" quando o toggle estiver ativo
+
+### Sem mudancas no banco de dados
+- O campo `max_actions_per_session` ja existe em `ig_accounts`
+- O campo `auto_renew_session` sera salvo dentro de `settings_json` em `user_settings`
+- `safety_limits.MAX_PER_SESSION` ja existe e sera ajustado para 9999
 
