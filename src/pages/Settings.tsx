@@ -95,6 +95,7 @@ interface BotSettings {
   bot_mode: string;
   likes_per_follow: number;
   max_actions_per_session: number;
+  auto_renew_session: boolean;
   // Schedule per weekday
   week_schedule: WeekSchedule;
   // Filters
@@ -111,7 +112,8 @@ const DEFAULTS: BotSettings = {
   delay_max: 90,
   bot_mode: "seguir_curtir",
   likes_per_follow: 2,
-  max_actions_per_session: 35,
+  max_actions_per_session: 200,
+  auto_renew_session: true,
   week_schedule: DEFAULT_WEEK_SCHEDULE,
   dont_unfollow_followers: true,
   email_notifications: true,
@@ -197,6 +199,7 @@ function parseSettings(raw: Record<string, unknown> | null): BotSettings {
     bot_mode: String(raw.bot_mode ?? DEFAULTS.bot_mode),
     likes_per_follow: Number(raw.likes_per_follow ?? DEFAULTS.likes_per_follow),
     max_actions_per_session: Number(raw.max_actions_per_session ?? DEFAULTS.max_actions_per_session),
+    auto_renew_session: raw.auto_renew_session !== undefined ? Boolean(raw.auto_renew_session) : DEFAULTS.auto_renew_session,
     week_schedule,
     dont_unfollow_followers: Boolean(raw.dont_unfollow_followers ?? DEFAULTS.dont_unfollow_followers),
     email_notifications: Boolean(raw.email_notifications ?? DEFAULTS.email_notifications),
@@ -972,18 +975,20 @@ export default function BotSettings() {
       presetDiffs.sort((a, b) => a.diff - b.diff);
       const detectedPreset = presetDiffs[0].id;
 
+      const effectiveSession = settings.auto_renew_session ? 9999 : settings.max_actions_per_session;
+
       const { error: accountError } = await supabase.from("ig_accounts").update({
         delay_min: settings.delay_min,
         delay_max: settings.delay_max,
         bot_mode: settings.bot_mode,
         likes_per_follow: settings.likes_per_follow,
-        max_actions_per_session: settings.max_actions_per_session,
+        max_actions_per_session: effectiveSession,
         bot_schedule: botSchedule as unknown as import("@/integrations/supabase/types").Json,
         safety_preset: detectedPreset,
         safety_limits: {
           MAX_PER_DAY: settings.follow_daily_limit,
           MAX_PER_HOUR: Math.ceil(settings.follow_daily_limit / 13),
-          MAX_PER_SESSION: settings.max_actions_per_session,
+          MAX_PER_SESSION: effectiveSession,
           MIN_DELAY_SECONDS: settings.delay_min,
           MAX_DELAY_SECONDS: settings.delay_max,
         } as unknown as import("@/integrations/supabase/types").Json,
@@ -1194,7 +1199,7 @@ export default function BotSettings() {
                       <div className="text-xs text-muted-foreground space-y-0.5">
                         <p>Follow: <span className="text-foreground font-medium">{p.follows}/dia</span></p>
                         <p>Delay: <span className="text-foreground font-medium">{p.delayMin}–{p.delayMax}s</span></p>
-                        <p>Sessão: <span className="text-foreground font-medium">{p.session} ações</span></p>
+                        <p>Sessão: <span className="text-foreground font-medium">{settings.auto_renew_session ? "ilimitada" : `${p.session} ações`}</span></p>
                       </div>
                     )}
 
@@ -1243,16 +1248,16 @@ export default function BotSettings() {
                                 supabase.from("ig_accounts").update({
                                   delay_min: p.delayMin,
                                   delay_max: p.delayMax,
-                                  max_actions_per_session: p.session,
-                                  likes_per_follow: settings.likes_per_follow ?? 2,
-                                  safety_preset: p.id,
-                                  safety_limits: {
-                                    MAX_PER_DAY: p.follows,
-                                    MAX_PER_HOUR: Math.ceil(p.follows / 13),
-                                    MAX_PER_SESSION: p.session,
-                                    MIN_DELAY_SECONDS: p.delayMin,
-                                    MAX_DELAY_SECONDS: p.delayMax,
-                                  },
+                          max_actions_per_session: settings.auto_renew_session ? 9999 : p.session,
+                          likes_per_follow: settings.likes_per_follow ?? 2,
+                          safety_preset: p.id,
+                          safety_limits: {
+                            MAX_PER_DAY: p.follows,
+                            MAX_PER_HOUR: Math.ceil(p.follows / 13),
+                            MAX_PER_SESSION: settings.auto_renew_session ? 9999 : p.session,
+                            MIN_DELAY_SECONDS: p.delayMin,
+                            MAX_DELAY_SECONDS: p.delayMax,
+                          },
                                 }).eq("id", acc.id)
                               )
                             );
@@ -1375,19 +1380,41 @@ export default function BotSettings() {
                   color="hsl(320 65% 60%)"
                   onChange={(v) => set("likes_per_follow", v)}
                 />
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
-                      <Zap className="h-3.5 w-3.5 text-muted-foreground" /> Máx. ações/sessão
-                    </Label>
-                    <span className="text-sm font-bold tabular-nums" style={{ color: "hsl(215 72% 60%)" }}>{settings.max_actions_per_session}</span>
+                <div className="space-y-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium flex items-center gap-1.5">
+                        <Zap className="h-3.5 w-3.5" style={{ color: "hsl(142 71% 45%)" }} />
+                        Renovar sessão automaticamente
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Quando ativo, a extensão reinicia a sessão ao atingir o limite (sem parar)
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.auto_renew_session}
+                      onCheckedChange={(v) => set("auto_renew_session", v)}
+                      className="flex-shrink-0 mt-0.5"
+                    />
                   </div>
-                  <Slider
-                    min={10} max={200} step={10}
-                    value={[settings.max_actions_per_session]}
-                    onValueChange={([v]) => set("max_actions_per_session", v)}
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground/60"><span>10</span><span>200</span></div>
+
+                  <div className={cn("space-y-2", settings.auto_renew_session && "opacity-40 pointer-events-none")}>
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
+                        <Zap className="h-3.5 w-3.5 text-muted-foreground" /> Máx. ações/sessão
+                      </Label>
+                      <span className="text-sm font-bold tabular-nums" style={{ color: "hsl(215 72% 60%)" }}>
+                        {settings.auto_renew_session ? "Ilimitado" : settings.max_actions_per_session}
+                      </span>
+                    </div>
+                    <Slider
+                      min={10} max={200} step={10}
+                      value={[settings.max_actions_per_session]}
+                      onValueChange={([v]) => set("max_actions_per_session", v)}
+                      disabled={settings.auto_renew_session}
+                    />
+                    <div className="flex justify-between text-xs text-muted-foreground/60"><span>10</span><span>200</span></div>
+                  </div>
                 </div>
               </div>
             </SectionCard>
