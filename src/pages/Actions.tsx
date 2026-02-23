@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { List, Search, RefreshCw } from "lucide-react";
+import { List, Search, RefreshCw, Heart } from "lucide-react";
 
 interface ActionRow {
   id: string;
@@ -267,7 +267,11 @@ export default function Actions() {
                                 border: `1px solid ${c?.border ?? "rgba(148, 163, 184, 0.3)"}`,
                               }}
                             >
-                              {a.action_type}
+                              {a.action_type.toLowerCase() === "like" ? (
+                                <Heart className="h-3 w-3 fill-current text-red-500" />
+                              ) : (
+                                a.action_type
+                              )}
                             </Badge>
                           );
                         })()}
