@@ -16,6 +16,10 @@ Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PRO
 
 Changes made via Lovable will be committed automatically to this repo.
 
+## LVB.Up local workflow
+
+Os comandos da extensão são editados pelo Codex local, validados no ambiente local e sincronizados pelo GitHub.
+
 **Use your preferred IDE**
 
 If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
